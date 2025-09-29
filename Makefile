@@ -1,4 +1,6 @@
-.PHONY: build test run-server run-client fmt lint
+.PHONY: build test run-server run-client fmt stop
+
+PORT ?= 9090
 
 build:
 	go build ./...
@@ -17,3 +19,11 @@ run-client:
 
 fmt:
 	go fmt ./...
+
+stop:
+	@PID=$$(lsof -t -nP -iTCP:$(PORT) -sTCP:LISTEN 2>/dev/null || true); \
+	if [ -n "$$PID" ]; then \
+		kill $$PID && echo "Killed process $$PID on port $(PORT)"; \
+	else \
+		echo "No process running on port $(PORT)"; \
+	fi

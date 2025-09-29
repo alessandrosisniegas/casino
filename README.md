@@ -6,6 +6,7 @@ Completion will include TCP multiplayer and probability guidance.
 ## Usage
 ```bash
 make build
+make test       # run all tests
 make run-server
 make run-client # in another terminal
 ```
@@ -15,12 +16,12 @@ make run-client # in another terminal
 - `cmd/client` — Client
 - `core/game` — Blackjack Game
 - `core/vault` — SQLite Database
-- `core/security` — Account Authentication
+- `core/security` — Authentication & Security
 - `data/` — Runtime Data
 
 ## Roadmap
 - Week 1: Setup & Design (X)
-- Week 2: Authentication & Persistence
+- Week 2: Authentication & Persistence (X)
 - Week 3: Core Blackjack
 - Week 4: UI Foundations
 - Week 5: Statistics Tracking (MVP)
