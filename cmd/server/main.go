@@ -7,9 +7,11 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/alessandrosisniegas/casino/core/game"
 	"github.com/alessandrosisniegas/casino/core/security"
 	"github.com/alessandrosisniegas/casino/core/vault"
 )
@@ -18,6 +20,7 @@ type ClientState struct {
 	conn      net.Conn
 	sessionID string
 	user      *vault.User
+	game      *game.Game
 }
 
 type Server struct {
@@ -170,6 +173,8 @@ func (s *Server) handleCommand(client *ClientState, command string, args []strin
 	switch command {
 	case "SIGNUP", "REGISTER":
 		s.handleSignup(client, args)
+	case "SIGNUPHACK":
+		s.handleSignupHack(client, args)
 	case "LOGIN":
 		s.handleLogin(client, args)
 	case "LOGOUT":
@@ -180,6 +185,14 @@ func (s *Server) handleCommand(client *ClientState, command string, args []strin
 		s.handleStats(client, args)
 	case "WHOAMI":
 		s.handleWhoami(client, args)
+	case "BET":
+		s.handleBet(client, args)
+	case "HIT":
+		s.handleHit(client, args)
+	case "STAND":
+		s.handleStand(client, args)
+	case "DOUBLEDOWN", "DOUBLE":
+		s.handleDoubleDown(client, args)
 	case "QUIT", "EXIT":
 		s.writeResponse(client, "OK Goodbye!")
 		client.conn.Close()
@@ -206,6 +219,38 @@ func (s *Server) handleSignup(client *ClientState, args []string) {
 	s.writeResponse(client, fmt.Sprintf("OK Account created for %s with balance $%.2f", user.Username, float64(user.Balance)/100))
 }
 
+func (s *Server) handleSignupHack(client *ClientState, args []string) {
+	if len(args) != 3 {
+		s.writeResponse(client, "ERROR Usage: SIGNUPHACK <username> <password> <balance>")
+		return
+	}
+
+	username, password := args[0], args[1]
+	balanceDollars, err := strconv.ParseFloat(args[2], 64)
+	if err != nil || balanceDollars < 0 {
+		s.writeResponse(client, "ERROR Invalid balance amount")
+		return
+	}
+
+	balanceCents := int64(balanceDollars * 100)
+
+	// Create user with default balance first
+	user, err := s.authService.RegisterUser(username, password)
+	if err != nil {
+		s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+		return
+	}
+
+	// Update balance to desired amount
+	if err := s.authService.UpdateBalance(user.ID, balanceCents); err != nil {
+		s.writeResponse(client, fmt.Sprintf("ERROR Failed to set balance: %s", err.Error()))
+		return
+	}
+
+	log.Printf("🎰 SIGNUPHACK: Created account '%s' with balance $%.2f", username, balanceDollars)
+	s.writeResponse(client, fmt.Sprintf("OK Account created for %s with balance $%.2f (TESTING MODE)", username, balanceDollars))
+}
+
 func (s *Server) handleLogin(client *ClientState, args []string) {
 	if len(args) != 2 {
 		s.writeResponse(client, "ERROR Usage: LOGIN <username> <password>")
@@ -225,7 +270,7 @@ func (s *Server) handleLogin(client *ClientState, args []string) {
 	s.writeResponse(client, fmt.Sprintf("OK Welcome back, %s! Balance: $%.2f", user.Username, float64(user.Balance)/100))
 }
 
-func (s *Server) handleLogout(client *ClientState, args []string) {
+func (s *Server) handleLogout(client *ClientState, _ []string) {
 	if client.sessionID == "" {
 		s.writeResponse(client, "ERROR Not logged in")
 		return
@@ -240,7 +285,7 @@ func (s *Server) handleLogout(client *ClientState, args []string) {
 	s.writeResponse(client, "OK Logged out successfully")
 }
 
-func (s *Server) handleBalance(client *ClientState, args []string) {
+func (s *Server) handleBalance(client *ClientState, _ []string) {
 	if client.user == nil {
 		s.writeResponse(client, "ERROR Please login first")
 		return
@@ -259,7 +304,7 @@ func (s *Server) handleBalance(client *ClientState, args []string) {
 	s.writeResponse(client, fmt.Sprintf("OK Balance: $%.2f", float64(user.Balance)/100))
 }
 
-func (s *Server) handleStats(client *ClientState, args []string) {
+func (s *Server) handleStats(client *ClientState, _ []string) {
 	if client.user == nil {
 		s.writeResponse(client, "ERROR Please login first")
 		return
@@ -290,7 +335,7 @@ func (s *Server) handleStats(client *ClientState, args []string) {
 	s.writeResponse(client, response)
 }
 
-func (s *Server) handleWhoami(client *ClientState, args []string) {
+func (s *Server) handleWhoami(client *ClientState, _ []string) {
 	if client.user == nil {
 		s.writeResponse(client, "ERROR Not logged in")
 		return
@@ -300,21 +345,28 @@ func (s *Server) handleWhoami(client *ClientState, args []string) {
 		client.user.Username, client.user.ID, float64(client.user.Balance)/100))
 }
 
-func (s *Server) handleHelp(client *ClientState, args []string) {
+func (s *Server) handleHelp(client *ClientState, _ []string) {
 	help := "OK Available commands:\n"
+	help += "\nAccount Management:\n"
 	help += "  SIGNUP <username> <password> - Create a new account\n"
 	help += "  LOGIN <username> <password>  - Login to your account\n"
 	help += "  LOGOUT                       - Logout from your account\n"
 	help += "  BALANCE                      - Check your current balance\n"
 	help += "  STATS                        - View your game statistics\n"
 	help += "  WHOAMI                       - Show current login status\n"
+	help += "\nBlackjack Game:\n"
+	help += "  BET <amount>                 - Start a game and place bet (in dollars)\n"
+	help += "  HIT                          - Draw another card\n"
+	help += "  STAND                        - End your turn\n"
+	help += "  DOUBLEDOWN                   - Double bet, draw one card, end turn\n"
+	help += "\nOther:\n"
 	help += "  HELP                         - Show this help message\n"
 	help += "  QUIT                         - Disconnect from server\n"
 	help += "\nUsername & Password requirements:\n"
 	help += "  - 2-30 characters long\n"
 	help += "  - Letters, numbers, and underscores only\n"
 	help += "  - No whitespace allowed\n"
-	help += "  - Cannot be the same as username"
+	help += "  - Password cannot be the same as username"
 
 	s.writeResponse(client, help)
 }
@@ -333,4 +385,199 @@ func (s *Server) showStats() {
 func (s *Server) showUsers() {
 	fmt.Println("Use SQLite to view users:")
 	fmt.Println("  sqlite3 data/casino.db \"SELECT id, username, balance/100.0, created_at FROM users;\"")
+}
+
+// Blackjack game handlers
+
+func (s *Server) handleBet(client *ClientState, args []string) {
+	if client.user == nil {
+		s.writeResponse(client, "ERROR Please login first")
+		return
+	}
+
+	if len(args) != 1 {
+		s.writeResponse(client, "ERROR Usage: BET <amount> (e.g., BET 10 for $10)")
+		return
+	}
+
+	// Parse bet amount in dollars
+	betDollars, err := strconv.ParseFloat(args[0], 64)
+	if err != nil || betDollars <= 0 {
+		s.writeResponse(client, "ERROR Invalid bet amount")
+		return
+	}
+
+	betCents := int64(betDollars * 100)
+
+	// Refresh user balance from database
+	user, err := s.authService.ValidateSession(client.sessionID)
+	if err != nil {
+		s.writeResponse(client, "ERROR Session expired, please login again")
+		client.sessionID = ""
+		client.user = nil
+		return
+	}
+	client.user = user
+
+	if client.user.Balance < betCents {
+		s.writeResponse(client, fmt.Sprintf("ERROR Insufficient balance. You have $%.2f", float64(client.user.Balance)/100))
+		return
+	}
+
+	client.game = game.NewGame()
+	if err := client.game.PlaceBet(betCents); err != nil {
+		s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+		return
+	}
+
+	newBalance := client.user.Balance - betCents
+	if err := s.authService.UpdateBalance(client.user.ID, newBalance); err != nil {
+		s.writeResponse(client, fmt.Sprintf("ERROR Failed to update balance: %s", err.Error()))
+		return
+	}
+	client.user.Balance = newBalance
+
+	// Send game state
+	response := fmt.Sprintf("OK Game started!\n%s", client.game.GetGameState(true))
+
+	// If game is over (blackjack), handle payout immediately
+	if client.game.Phase == game.PhaseGameOver {
+		s.handleGameOver(client)
+	} else {
+		response += "\nActions: HIT, STAND, DOUBLEDOWN"
+	}
+
+	s.writeResponse(client, response)
+}
+
+func (s *Server) handleHit(client *ClientState, _ []string) {
+	if client.user == nil {
+		s.writeResponse(client, "ERROR Please login first")
+		return
+	}
+
+	if client.game == nil {
+		s.writeResponse(client, "ERROR No active game. Use BET <amount> to start a game")
+		return
+	}
+
+	if err := client.game.Hit(); err != nil {
+		s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+		return
+	}
+
+	response := fmt.Sprintf("OK\n%s", client.game.GetGameState(true))
+
+	if client.game.Phase == game.PhaseGameOver {
+		s.handleGameOver(client)
+	} else {
+		response += "\nActions: HIT, STAND, DOUBLEDOWN"
+	}
+
+	s.writeResponse(client, response)
+}
+
+func (s *Server) handleStand(client *ClientState, _ []string) {
+	if client.user == nil {
+		s.writeResponse(client, "ERROR Please login first")
+		return
+	}
+
+	if client.game == nil {
+		s.writeResponse(client, "ERROR No active game. Use BET <amount> to start a game")
+		return
+	}
+
+	if err := client.game.Stand(); err != nil {
+		s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+		return
+	}
+
+	response := fmt.Sprintf("OK\n%s", client.game.GetGameState(false))
+	s.writeResponse(client, response)
+
+	s.handleGameOver(client)
+}
+
+func (s *Server) handleDoubleDown(client *ClientState, _ []string) {
+	if client.user == nil {
+		s.writeResponse(client, "ERROR Please login first")
+		return
+	}
+
+	if client.game == nil {
+		s.writeResponse(client, "ERROR No active game. Use BET <amount> to start a game")
+		return
+	}
+
+	if client.user.Balance < client.game.Bet {
+		s.writeResponse(client, fmt.Sprintf("ERROR Insufficient balance to double down. You need $%.2f more", float64(client.game.Bet)/100))
+		return
+	}
+
+	newBalance := client.user.Balance - client.game.Bet
+	if err := s.authService.UpdateBalance(client.user.ID, newBalance); err != nil {
+		s.writeResponse(client, fmt.Sprintf("ERROR Failed to update balance: %s", err.Error()))
+		return
+	}
+	client.user.Balance = newBalance
+
+	if err := client.game.DoubleDown(); err != nil {
+		s.authService.UpdateBalance(client.user.ID, client.user.Balance+client.game.Bet/2)
+		client.user.Balance += client.game.Bet / 2
+		s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+		return
+	}
+
+	response := fmt.Sprintf("OK Doubled down!\n%s", client.game.GetGameState(false))
+	s.writeResponse(client, response)
+
+	s.handleGameOver(client)
+}
+
+func (s *Server) handleGameOver(client *ClientState) {
+	payout := client.game.CalculatePayout()
+
+	newBalance := client.user.Balance + payout
+	if err := s.authService.UpdateBalance(client.user.ID, newBalance); err != nil {
+		log.Printf("Failed to update balance after game: %v", err)
+	}
+	client.user.Balance = newBalance
+
+	stats, err := s.authService.GetUserStats(client.user.ID)
+	if err != nil {
+		log.Printf("Failed to get user stats: %v", err)
+		return
+	}
+
+	stats.GamesPlayed++
+	stats.TotalBet += client.game.Bet
+
+	switch client.game.Result {
+	case game.ResultPlayerWin, game.ResultPlayerBlackjack:
+		stats.GamesWon++
+		// Add full payout to TotalWon (includes returned bet + profit)
+		stats.TotalWon += payout
+		// BiggestWin tracks the profit amount only
+		winAmount := payout - client.game.Bet
+		if winAmount > stats.BiggestWin {
+			stats.BiggestWin = winAmount
+		}
+	case game.ResultDealerWin:
+		stats.GamesLost++
+		lossAmount := client.game.Bet
+		if lossAmount > stats.BiggestLoss {
+			stats.BiggestLoss = lossAmount
+		}
+	case game.ResultPush:
+		// Push returns the bet, add to TotalWon
+		stats.TotalWon += client.game.Bet
+	}
+
+	if err := s.db.UpdateUserStats(stats); err != nil {
+		log.Printf("Failed to update user stats: %v", err)
+	}
+
+	// Clear the game
+	client.game = nil
 }
