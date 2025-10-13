@@ -41,8 +41,8 @@ func TestRegisterUser(t *testing.T) {
 		t.Errorf("RegisterUser() username = %v, want %v", user.Username, username)
 	}
 
-	if user.Balance != 100000 { // $1000.00 in cents
-		t.Errorf("RegisterUser() balance = %v, want 100000", user.Balance)
+	if user.Balance != 1000000 { // $10000.00 in cents
+		t.Errorf("RegisterUser() balance = %v, want 1000000", user.Balance)
 	}
 
 	if user.Password == password {

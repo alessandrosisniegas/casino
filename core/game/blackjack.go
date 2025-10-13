@@ -133,7 +133,7 @@ func (h *Hand) IsBlackjack() bool {
 func (h *Hand) String() string {
 	var cards []string
 	for _, card := range h.Cards {
-		cards = append(cards, fmt.Sprintf("%s%s", card.Rank, card.Suit))
+		cards = append(cards, fmt.Sprintf("[%s%s]", card.Rank, card.Suit))
 	}
 	return strings.Join(cards, " ")
 }
@@ -407,7 +407,7 @@ func (g *Game) GetGameState(hideDealer bool) string {
 	} else if hideDealer && g.Phase == PhasePlayerTurn {
 		// Hide dealer's second card during player turn
 		firstCard := g.DealerHand.Cards[0]
-		state += fmt.Sprintf("Dealer Hand: %s%s [Hidden]\n", firstCard.Rank, firstCard.Suit)
+		state += fmt.Sprintf("Dealer Hand: [%s%s] [Hidden]\n", firstCard.Rank, firstCard.Suit)
 	} else {
 		state += fmt.Sprintf("Dealer Hand: %s (Value: %d)\n", g.DealerHand.String(), g.DealerHand.Value())
 	}
@@ -436,4 +436,20 @@ func (g *Game) getResultMessage() string {
 	default:
 		return ""
 	}
+}
+
+// GetValidActions returns a list of valid actions based on the current game state
+func (g *Game) GetValidActions() []string {
+	if g.Phase != PhasePlayerTurn {
+		return []string{}
+	}
+
+	actions := []string{"HIT", "STAND"}
+
+	// DOUBLEDOWN is only valid on the first action (2 cards)
+	if len(g.PlayerHand.Cards) == 2 && !g.IsDoubled {
+		actions = append(actions, "DOUBLEDOWN")
+	}
+
+	return actions
 }

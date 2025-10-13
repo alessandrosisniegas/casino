@@ -173,8 +173,6 @@ func (s *Server) handleCommand(client *ClientState, command string, args []strin
 	switch command {
 	case "SIGNUP", "REGISTER":
 		s.handleSignup(client, args)
-	case "SIGNUPHACK":
-		s.handleSignupHack(client, args)
 	case "LOGIN":
 		s.handleLogin(client, args)
 	case "LOGOUT":
@@ -217,38 +215,6 @@ func (s *Server) handleSignup(client *ClientState, args []string) {
 	}
 
 	s.writeResponse(client, fmt.Sprintf("OK Account created for %s with balance $%.2f", user.Username, float64(user.Balance)/100))
-}
-
-func (s *Server) handleSignupHack(client *ClientState, args []string) {
-	if len(args) != 3 {
-		s.writeResponse(client, "ERROR Usage: SIGNUPHACK <username> <password> <balance>")
-		return
-	}
-
-	username, password := args[0], args[1]
-	balanceDollars, err := strconv.ParseFloat(args[2], 64)
-	if err != nil || balanceDollars < 0 {
-		s.writeResponse(client, "ERROR Invalid balance amount")
-		return
-	}
-
-	balanceCents := int64(balanceDollars * 100)
-
-	// Create user with default balance first
-	user, err := s.authService.RegisterUser(username, password)
-	if err != nil {
-		s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
-		return
-	}
-
-	// Update balance to desired amount
-	if err := s.authService.UpdateBalance(user.ID, balanceCents); err != nil {
-		s.writeResponse(client, fmt.Sprintf("ERROR Failed to set balance: %s", err.Error()))
-		return
-	}
-
-	log.Printf("🎰 SIGNUPHACK: Created account '%s' with balance $%.2f", username, balanceDollars)
-	s.writeResponse(client, fmt.Sprintf("OK Account created for %s with balance $%.2f (TESTING MODE)", username, balanceDollars))
 }
 
 func (s *Server) handleLogin(client *ClientState, args []string) {
@@ -317,8 +283,10 @@ func (s *Server) handleStats(client *ClientState, _ []string) {
 	}
 
 	winRate := float64(0)
+	avgBet := float64(0)
 	if stats.GamesPlayed > 0 {
 		winRate = float64(stats.GamesWon) / float64(stats.GamesPlayed) * 100
+		avgBet = float64(stats.TotalBet) / float64(stats.GamesPlayed) / 100
 	}
 
 	response := fmt.Sprintf("OK Stats for %s:\n", client.user.Username)
@@ -329,6 +297,7 @@ func (s *Server) handleStats(client *ClientState, _ []string) {
 	response += fmt.Sprintf("  Total Bet: $%.2f\n", float64(stats.TotalBet)/100)
 	response += fmt.Sprintf("  Total Won: $%.2f\n", float64(stats.TotalWon)/100)
 	response += fmt.Sprintf("  Net: $%.2f\n", float64(stats.TotalWon-stats.TotalBet)/100)
+	response += fmt.Sprintf("  Avg Bet: $%.2f\n", avgBet)
 	response += fmt.Sprintf("  Biggest Win: $%.2f\n", float64(stats.BiggestWin)/100)
 	response += fmt.Sprintf("  Biggest Loss: $%.2f", float64(stats.BiggestLoss)/100)
 
@@ -444,7 +413,11 @@ func (s *Server) handleBet(client *ClientState, args []string) {
 	if client.game.Phase == game.PhaseGameOver {
 		s.handleGameOver(client)
 	} else {
-		response += "\nActions: HIT, STAND, DOUBLEDOWN"
+		// Show only valid actions
+		validActions := client.game.GetValidActions()
+		if len(validActions) > 0 {
+			response += "\nActions: " + strings.Join(validActions, ", ")
+		}
 	}
 
 	s.writeResponse(client, response)
@@ -471,7 +444,11 @@ func (s *Server) handleHit(client *ClientState, _ []string) {
 	if client.game.Phase == game.PhaseGameOver {
 		s.handleGameOver(client)
 	} else {
-		response += "\nActions: HIT, STAND, DOUBLEDOWN"
+		// Show only valid actions
+		validActions := client.game.GetValidActions()
+		if len(validActions) > 0 {
+			response += "\nActions: " + strings.Join(validActions, ", ")
+		}
 	}
 
 	s.writeResponse(client, response)

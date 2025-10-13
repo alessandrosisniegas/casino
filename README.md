@@ -9,6 +9,7 @@ make build
 make test       # run all tests
 make run-server # start server in one terminal
 make run-client # start client in another terminal
+make stop       # stop the server
 ```
 
 ### Commands
@@ -73,10 +74,11 @@ cd cmd/server && go run .
 Casino Server listening on 127.0.0.1:9090
 Database initialized at ../../data/casino.db
 Type 'help' for server commands, 'quit' to shutdown
-server> 2025/10/11 17:33:01 Client connection error: read tcp 127.0.0.1:9090->127.0.0.1:55606: use of closed network connection
-quit
+server> quit
 Shutting down server...
 Server stopped.
+➜  casino git:(main) ✗ make stop
+No process running on port 9090
 ```
 Client:
 ```
@@ -86,12 +88,16 @@ Connected to Casino server at 127.0.0.1:9090
 Type 'help' for available commands or 'quit' to exit.
 
 OK Welcome to Casino! Use SIGNUP <username> <password> or LOGIN <username> <password>
-> SIGNUP frankie fs_blank
-OK Account created for frankie with balance $1000.00
-> LOGIN frankie fs_blank
-OK Welcome back, frankie! Balance: $1000.00
-> help
+
+$ signup mark zuckerburg
+OK Account created for mark with balance $10000.00
+
+$ login mark zuckerburg
+OK Welcome back, mark! Balance: $10000.00
+
+$ help
 OK Available commands:
+
 Account Management:
   SIGNUP <username> <password> - Create a new account
   LOGIN <username> <password>  - Login to your account
@@ -116,131 +122,98 @@ Username & Password requirements:
   - No whitespace allowed
   - Password cannot be the same as username
 
-> balance
-OK Balance: $1000.00
-> stats
-OK Stats for frankie:
-  Games Played: 0
-  Games Won: 0
-  Games Lost: 0
-  Win Rate: 0.0%
-  Total Bet: $0.00
-  Total Won: $0.00
-  Net: $0.00
-  Biggest Win: $0.00
-  Biggest Loss: $0.00
-
-> whoami
-OK Logged in as: frankie (ID: 7, Balance: $1000.00)
-> BET 100
-OK Game started!
-Bet: $100.00
-Player Hand: 5♦ K♠ (Value: 15)
-Dealer Hand: 10♠ [Hidden]
-
-Actions: HIT, STAND, DOUBLEDOWN
-   
-> hit
-OK
-Bet: $100.00
-Player Hand: 5♦ K♠ A♠ (Value: 16)
-Dealer Hand: 10♠ [Hidden]
-
-Actions: HIT, STAND, DOUBLEDOWN
-
-> hit
-OK
-Bet: $100.00
-Player Hand: 5♦ K♠ A♠ A♦ (Value: 17)
-Dealer Hand: 10♠ [Hidden]
-
-Actions: HIT, STAND, DOUBLEDOWN
-> hit
-OK
-Bet: $100.00
-Player Hand: 5♦ K♠ A♠ A♦ J♣ (Value: 27)
-Dealer Hand: 10♠ 7♥ (Value: 17)
-
-Result: Bust! Dealer wins.
-Payout: $0.00
- 
-> balance
-OK Balance: $900.00
-> bet 200
-OK Game started!
-Bet: $200.00
-Player Hand: 9♥ 7♥ (Value: 16)
-Dealer Hand: 9♠ [Hidden]
-
-Actions: HIT, STAND, DOUBLEDOWN
-> hit
-OK
-Bet: $200.00
-Player Hand: 9♥ 7♥ K♥ (Value: 26)
-Dealer Hand: 9♠ K♣ (Value: 19)
-
-Result: Bust! Dealer wins.
-Payout: $0.00
-
-> bet 400
-OK Game started!
-Bet: $400.00
-Player Hand: 2♠ 8♦ (Value: 10)
-Dealer Hand: 7♥ [Hidden]
-
-Actions: HIT, STAND, DOUBLEDOWN
-> hit  
-OK
-Bet: $400.00
-Player Hand: 2♠ 8♦ 7♠ (Value: 17)
-Dealer Hand: 7♥ [Hidden]
-
-Actions: HIT, STAND, DOUBLEDOWN
-> stand
-OK
-Bet: $400.00
-Player Hand: 2♠ 8♦ 7♠ (Value: 17)
-Dealer Hand: 7♥ 8♥ 10♠ (Value: 25)
-
-Result: You win!
-Payout: $800.00
-
-> balance
-OK Balance: $1100.00
-> bet 500
+$ bet 500
 OK Game started!
 Bet: $500.00
-Player Hand: 3♠ J♥ (Value: 13)
-Dealer Hand: 6♣ [Hidden]
+Player Hand: [6♥] [7♦] (Value: 13)
+Dealer Hand: [4♥] [Hidden]
 
 Actions: HIT, STAND, DOUBLEDOWN
-> doubledown
+
+$ doubledown
 OK Doubled down!
-> Bet: $1000.00
-Player Hand: 3♠ J♥ A♥ (Value: 14)
-Dealer Hand: 6♣ 3♥ 8♠ (Value: 17)
+Bet: $1000.00
+Player Hand: [6♥] [7♦] [4♦] (Value: 17)
+Dealer Hand: [4♥] [J♠] [2♥] [6♦] (Value: 22)
+
+Result: You win!
+Payout: $2000.00
+
+
+$ balance
+OK Balance: $11000.00
+
+$ bet 1000
+OK Game started!
+Bet: $1000.00
+Player Hand: [3♣] [8♥] (Value: 11)
+Dealer Hand: [3♦] [Hidden]
+
+Actions: HIT, STAND, DOUBLEDOWN
+
+$ hit
+OK
+Bet: $1000.00
+Player Hand: [3♣] [8♥] [Q♦] (Value: 21)
+Dealer Hand: [3♦] [Hidden]
+
+Actions: HIT, STAND
+
+$ stand
+OK
+Bet: $1000.00
+Player Hand: [3♣] [8♥] [Q♦] (Value: 21)
+Dealer Hand: [3♦] [A♠] [A♦] [A♥] [6♣] [6♠] (Value: 18)
+
+Result: You win!
+Payout: $2000.00
+
+
+$ bet 2000
+OK Game started!
+Bet: $2000.00
+Player Hand: [3♠] [5♦] (Value: 8)
+Dealer Hand: [4♠] [Hidden]
+
+Actions: HIT, STAND, DOUBLEDOWN
+
+$ hit
+OK
+Bet: $2000.00
+Player Hand: [3♠] [5♦] [7♣] (Value: 15)
+Dealer Hand: [4♠] [Hidden]
+
+Actions: HIT, STAND
+
+$ stand
+OK
+Bet: $2000.00
+Player Hand: [3♠] [5♦] [7♣] (Value: 15)
+Dealer Hand: [4♠] [5♠] [A♥] (Value: 20)
 
 Result: Dealer wins.
 Payout: $0.00
 
-> balance
-OK Balance: $100.00
-> stats
-OK Stats for frankie:
-  Games Played: 4
-  Games Won: 1
-  Games Lost: 3
-  Win Rate: 25.0%
-  Total Bet: $1700.00
-  Total Won: $800.00
-  Net: $-900.00
-  Biggest Win: $400.00
-  Biggest Loss: $1000.00
 
-> logout
+$ balance
+OK Balance: $10000.00
+
+$ stats
+OK Stats for mark:
+  Games Played: 3
+  Games Won: 2
+  Games Lost: 1
+  Win Rate: 66.7%
+  Total Bet: $4000.00
+  Total Won: $4000.00
+  Net: $0.00
+  Avg Bet: $1333.33
+  Biggest Win: $1000.00
+  Biggest Loss: $2000.00
+
+$ logout
 OK Logged out successfully
-> whoami
-ERROR Not logged in
-> quit
+
+$ quit
 Connection to server lost
 ```

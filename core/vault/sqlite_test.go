@@ -59,8 +59,8 @@ func TestCreateUser(t *testing.T) {
 		t.Errorf("CreateUser() password = %v, want %v", user.Password, password)
 	}
 
-	if user.Balance != 100000 { // Default $1000.00 in cents
-		t.Errorf("CreateUser() balance = %v, want %v", user.Balance, 100000)
+	if user.Balance != 1000000 { // Default $10000.00 in cents
+		t.Errorf("CreateUser() balance = %v, want %v", user.Balance, 1000000)
 	}
 
 	if user.ID == 0 {

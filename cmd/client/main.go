@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -36,13 +37,16 @@ func main() {
 
 func readFromServer(conn net.Conn) {
 	scanner := bufio.NewScanner(conn)
+
 	for scanner.Scan() {
 		response := scanner.Text()
-		fmt.Println(response)
 
-		if strings.HasPrefix(response, "OK") || strings.HasPrefix(response, "ERROR") {
-			fmt.Print("> ")
+		// Don't print the prompt itself if server sends it
+		if response == "$" || response == ">" {
+			continue
 		}
+
+		fmt.Println(response)
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -54,12 +58,14 @@ func readFromServer(conn net.Conn) {
 func writeToServer(conn net.Conn) {
 	scanner := bufio.NewScanner(os.Stdin)
 
-	fmt.Print("> ")
+	// Wait for welcome message before showing first prompt
+	time.Sleep(100 * time.Millisecond)
+	fmt.Print("\n$ ")
 
 	for scanner.Scan() {
 		input := strings.TrimSpace(scanner.Text())
 		if input == "" {
-			fmt.Print("> ")
+			fmt.Print("$ ")
 			continue
 		}
 
@@ -76,7 +82,7 @@ func writeToServer(conn net.Conn) {
 				password, err := getPassword("Password: ")
 				if err != nil {
 					fmt.Println("ERROR: Failed to read password")
-					fmt.Print("> ")
+					fmt.Print("\n$ ")
 					continue
 				}
 				input = fmt.Sprintf("%s %s %s", command, username, password)
@@ -89,6 +95,10 @@ func writeToServer(conn net.Conn) {
 			fmt.Println("Failed to send command:", err)
 			return
 		}
+
+		// Wait a bit for server response to complete, then show next prompt with blank line
+		time.Sleep(100 * time.Millisecond)
+		fmt.Print("\n$ ")
 	}
 
 	if err := scanner.Err(); err != nil {

@@ -644,8 +644,8 @@ func TestHandString(t *testing.T) {
 	hand.AddCard(Card{Rank: "K", Suit: "♥", Value: 10})
 
 	str := hand.String()
-	if str != "A♠ K♥" {
-		t.Errorf("expected 'A♠ K♥', got '%s'", str)
+	if str != "[A♠] [K♥]" {
+		t.Errorf("expected '[A♠] [K♥]', got '%s'", str)
 	}
 }
 
