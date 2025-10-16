@@ -557,3 +557,190 @@ func TestDoubleDownIntegration(t *testing.T) {
 		t.Errorf("Balance = %d, want 1000000 (original)", updatedUser.Balance)
 	}
 }
+
+func TestSurrenderIntegration(t *testing.T) {
+	// Setup test database
+	db, err := vault.NewDB(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create test database: %v", err)
+	}
+	defer db.Close()
+
+	authService := security.NewAuthService(db)
+
+	// Register and login
+	user, err := authService.RegisterUser("surrenderplayer", "pass123")
+	if err != nil {
+		t.Fatalf("RegisterUser() error = %v", err)
+	}
+
+	initialBalance := user.Balance // 1000000 cents = $10000
+
+	// Play game 1: Surrender with bet of 100000 cents ($1000)
+	// Should lose half: 50000 cents ($500)
+	g1 := game.NewGameWithDeck([]game.Card{
+		{Rank: "5", Suit: "♠", Value: 5},   // Player card 1
+		{Rank: "10", Suit: "♥", Value: 10}, // Dealer card 1
+		{Rank: "10", Suit: "♠", Value: 10}, // Player card 2 (15 total - bad hand)
+		{Rank: "K", Suit: "♥", Value: 10},  // Dealer card 2
+	})
+
+	if err := g1.PlaceBetNoShuffle(100000); err != nil {
+		t.Fatalf("PlaceBet() error = %v", err)
+	}
+
+	// Surrender
+	if err := g1.Surrender(); err != nil {
+		t.Fatalf("Surrender() error = %v", err)
+	}
+
+	if g1.Result != game.ResultSurrender {
+		t.Errorf("Expected ResultSurrender, got %s", g1.Result)
+	}
+
+	payout1 := g1.CalculatePayout()
+	if payout1 != 50000 {
+		t.Errorf("Expected payout of 50000 (half bet), got %d", payout1)
+	}
+
+	// Update balance (bet already deducted, add payout)
+	newBalance1 := initialBalance - g1.Bet + payout1
+	if err := authService.UpdateBalance(user.ID, newBalance1); err != nil {
+		t.Fatalf("UpdateBalance() error = %v", err)
+	}
+
+	// Update stats
+	stats1, _ := authService.GetUserStats(user.ID)
+	stats1.GamesPlayed++
+	stats1.GamesLost++ // Surrender counts as loss
+	stats1.TotalBet += g1.Bet
+	stats1.TotalWon += payout1
+	lossAmount1 := g1.Bet / 2
+	if lossAmount1 > stats1.BiggestLoss {
+		stats1.BiggestLoss = lossAmount1
+	}
+	if err := db.UpdateUserStats(stats1); err != nil {
+		t.Fatalf("UpdateUserStats() error = %v", err)
+	}
+
+	// Verify stats after game 1
+	stats, err := authService.GetUserStats(user.ID)
+	if err != nil {
+		t.Fatalf("GetUserStats() error = %v", err)
+	}
+
+	if stats.GamesPlayed != 1 {
+		t.Errorf("GamesPlayed = %d, want 1", stats.GamesPlayed)
+	}
+
+	if stats.GamesWon != 0 {
+		t.Errorf("GamesWon = %d, want 0", stats.GamesWon)
+	}
+
+	if stats.GamesLost != 1 {
+		t.Errorf("GamesLost = %d, want 1 (surrender counts as loss)", stats.GamesLost)
+	}
+
+	if stats.TotalBet != 100000 {
+		t.Errorf("TotalBet = %d, want 100000", stats.TotalBet)
+	}
+
+	if stats.TotalWon != 50000 {
+		t.Errorf("TotalWon = %d, want 50000 (half bet returned)", stats.TotalWon)
+	}
+
+	expectedNet := stats.TotalWon - stats.TotalBet // 50000 - 100000 = -50000
+	if expectedNet != -50000 {
+		t.Errorf("Net = %d, want -50000 (lost half bet)", expectedNet)
+	}
+
+	if stats.BiggestLoss != 50000 {
+		t.Errorf("BiggestLoss = %d, want 50000 (half of bet)", stats.BiggestLoss)
+	}
+
+	// Verify balance
+	user, _ = db.GetUserByID(user.ID)
+	expectedBalance := initialBalance - 50000 // Lost half of 100000
+	if user.Balance != expectedBalance {
+		t.Errorf("Balance after surrender = %d, want %d", user.Balance, expectedBalance)
+	}
+
+	// Play game 2: Another surrender with different bet
+	g2 := game.NewGameWithDeck([]game.Card{
+		{Rank: "6", Suit: "♠", Value: 6},   // Player card 1
+		{Rank: "A", Suit: "♥", Value: 11},  // Dealer card 1
+		{Rank: "10", Suit: "♠", Value: 10}, // Player card 2 (16 total vs Ace)
+		{Rank: "6", Suit: "♥", Value: 6},   // Dealer card 2 (soft 17)
+	})
+
+	if err := g2.PlaceBetNoShuffle(80000); err != nil { // Bet $800
+		t.Fatalf("PlaceBet() error = %v", err)
+	}
+
+	if err := g2.Surrender(); err != nil {
+		t.Fatalf("Surrender() error = %v", err)
+	}
+
+	payout2 := g2.CalculatePayout()
+	if payout2 != 40000 {
+		t.Errorf("Expected payout of 40000 (half of 80000), got %d", payout2)
+	}
+
+	// Update balance
+	newBalance2 := user.Balance - g2.Bet + payout2
+	if err := authService.UpdateBalance(user.ID, newBalance2); err != nil {
+		t.Fatalf("UpdateBalance() error = %v", err)
+	}
+
+	// Update stats
+	stats2, _ := authService.GetUserStats(user.ID)
+	stats2.GamesPlayed++
+	stats2.GamesLost++
+	stats2.TotalBet += g2.Bet
+	stats2.TotalWon += payout2
+	lossAmount2 := g2.Bet / 2
+	if lossAmount2 > stats2.BiggestLoss {
+		stats2.BiggestLoss = lossAmount2
+	}
+	if err := db.UpdateUserStats(stats2); err != nil {
+		t.Fatalf("UpdateUserStats() error = %v", err)
+	}
+
+	// Verify final stats
+	finalStats, err := authService.GetUserStats(user.ID)
+	if err != nil {
+		t.Fatalf("GetUserStats() error = %v", err)
+	}
+
+	if finalStats.GamesPlayed != 2 {
+		t.Errorf("Final GamesPlayed = %d, want 2", finalStats.GamesPlayed)
+	}
+
+	if finalStats.GamesLost != 2 {
+		t.Errorf("Final GamesLost = %d, want 2", finalStats.GamesLost)
+	}
+
+	if finalStats.TotalBet != 180000 {
+		t.Errorf("Final TotalBet = %d, want 180000", finalStats.TotalBet)
+	}
+
+	if finalStats.TotalWon != 90000 {
+		t.Errorf("Final TotalWon = %d, want 90000 (50000 + 40000)", finalStats.TotalWon)
+	}
+
+	finalNet := finalStats.TotalWon - finalStats.TotalBet // 90000 - 180000 = -90000
+	if finalNet != -90000 {
+		t.Errorf("Final Net = %d, want -90000", finalNet)
+	}
+
+	if finalStats.BiggestLoss != 50000 {
+		t.Errorf("Final BiggestLoss = %d, want 50000", finalStats.BiggestLoss)
+	}
+
+	// Verify final balance
+	user, _ = db.GetUserByID(user.ID)
+	finalExpectedBalance := initialBalance - 90000 // Lost 50000 + 40000
+	if user.Balance != finalExpectedBalance {
+		t.Errorf("Final balance = %d, want %d", user.Balance, finalExpectedBalance)
+	}
+}

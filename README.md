@@ -28,6 +28,7 @@ BET <amount>          # Start a game (e.g., BET 10 for $10)
 HIT                   # Draw another card
 STAND                 # End your turn
 DOUBLEDOWN            # Double bet, draw one card, end turn
+SURRENDER             # Forfeit hand, get half bet back
 ```
 
 **Account Info:**

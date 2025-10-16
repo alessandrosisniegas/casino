@@ -37,6 +37,7 @@ const (
 	ResultDealerWin       GameResult = "DEALER_WIN"
 	ResultPush            GameResult = "PUSH"
 	ResultPlayerBlackjack GameResult = "PLAYER_BLACKJACK"
+	ResultSurrender       GameResult = "SURRENDER"
 )
 
 type Game struct {
@@ -343,6 +344,21 @@ func (g *Game) DoubleDown() error {
 	return nil
 }
 
+// Surrenders the hand, forfeiting half the bet
+func (g *Game) Surrender() error {
+	if g.Phase != PhasePlayerTurn {
+		return fmt.Errorf("cannot surrender in current phase")
+	}
+	if len(g.PlayerHand.Cards) != 2 {
+		return fmt.Errorf("can only surrender on initial hand")
+	}
+
+	g.Phase = PhaseGameOver
+	g.Result = ResultSurrender
+
+	return nil
+}
+
 // Plays the dealer's turn according to standard rules
 func (g *Game) playDealerTurn() {
 	// Dealer must hit on 16 or less, stand on 17 or more
@@ -386,6 +402,8 @@ func (g *Game) CalculatePayout() int64 {
 		return g.Bet * 2 // Regular win pays 1:1
 	case ResultPush:
 		return g.Bet // Push returns bet
+	case ResultSurrender:
+		return g.Bet / 2 // Surrender returns half the bet
 	case ResultDealerWin:
 		return 0 // Loss returns nothing
 	default:
@@ -433,6 +451,8 @@ func (g *Game) getResultMessage() string {
 		return "Dealer wins."
 	case ResultPush:
 		return "Push - tie game."
+	case ResultSurrender:
+		return "Surrendered - half bet returned."
 	default:
 		return ""
 	}
@@ -446,9 +466,9 @@ func (g *Game) GetValidActions() []string {
 
 	actions := []string{"HIT", "STAND"}
 
-	// DOUBLEDOWN is only valid on the first action (2 cards)
+	// DOUBLEDOWN and SURRENDER are only valid on the first action (2 cards)
 	if len(g.PlayerHand.Cards) == 2 && !g.IsDoubled {
-		actions = append(actions, "DOUBLEDOWN")
+		actions = append(actions, "DOUBLEDOWN", "SURRENDER")
 	}
 
 	return actions

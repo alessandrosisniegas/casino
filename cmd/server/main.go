@@ -191,6 +191,8 @@ func (s *Server) handleCommand(client *ClientState, command string, args []strin
 		s.handleStand(client, args)
 	case "DOUBLEDOWN", "DOUBLE":
 		s.handleDoubleDown(client, args)
+	case "SURRENDER":
+		s.handleSurrender(client, args)
 	case "QUIT", "EXIT":
 		s.writeResponse(client, "OK Goodbye!")
 		client.conn.Close()
@@ -328,6 +330,7 @@ func (s *Server) handleHelp(client *ClientState, _ []string) {
 	help += "  HIT                          - Draw another card\n"
 	help += "  STAND                        - End your turn\n"
 	help += "  DOUBLEDOWN                   - Double bet, draw one card, end turn\n"
+	help += "  SURRENDER                    - Forfeit hand, get half bet back\n"
 	help += "\nOther:\n"
 	help += "  HELP                         - Show this help message\n"
 	help += "  QUIT                         - Disconnect from server\n"
@@ -512,6 +515,28 @@ func (s *Server) handleDoubleDown(client *ClientState, _ []string) {
 	s.handleGameOver(client)
 }
 
+func (s *Server) handleSurrender(client *ClientState, _ []string) {
+	if client.user == nil {
+		s.writeResponse(client, "ERROR Please login first")
+		return
+	}
+
+	if client.game == nil {
+		s.writeResponse(client, "ERROR No active game. Use BET <amount> to start a game")
+		return
+	}
+
+	if err := client.game.Surrender(); err != nil {
+		s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+		return
+	}
+
+	response := fmt.Sprintf("OK Surrendered!\n%s", client.game.GetGameState(false))
+	s.writeResponse(client, response)
+
+	s.handleGameOver(client)
+}
+
 func (s *Server) handleGameOver(client *ClientState) {
 	payout := client.game.CalculatePayout()
 
@@ -543,6 +568,15 @@ func (s *Server) handleGameOver(client *ClientState) {
 	case game.ResultDealerWin:
 		stats.GamesLost++
 		lossAmount := client.game.Bet
+		if lossAmount > stats.BiggestLoss {
+			stats.BiggestLoss = lossAmount
+		}
+	case game.ResultSurrender:
+		stats.GamesLost++
+		// Add the half-bet payout to TotalWon
+		stats.TotalWon += payout
+		// Loss is half the bet
+		lossAmount := client.game.Bet / 2
 		if lossAmount > stats.BiggestLoss {
 			stats.BiggestLoss = lossAmount
 		}

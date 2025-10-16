@@ -1376,3 +1376,190 @@ func TestHitUntilBust(t *testing.T) {
 		t.Errorf("expected dealer win after player bust, got %s", game.Result)
 	}
 }
+
+func TestSurrender(t *testing.T) {
+	// Use deterministic deck
+	deck := []Card{
+		{Rank: "5", Suit: "♠", Value: 5},   // P1
+		{Rank: "6", Suit: "♠", Value: 6},   // D1
+		{Rank: "10", Suit: "♥", Value: 10}, // P2 (15 total - bad hand)
+		{Rank: "K", Suit: "♠", Value: 10},  // D2
+	}
+
+	game := NewGameWithDeck(deck)
+	game.PlaceBetNoShuffle(1000)
+
+	if game.Phase != PhasePlayerTurn {
+		t.Fatalf("expected player turn, got %s", game.Phase)
+	}
+
+	err := game.Surrender()
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	if game.Phase != PhaseGameOver {
+		t.Errorf("expected game over after surrender, got %s", game.Phase)
+	}
+
+	if game.Result != ResultSurrender {
+		t.Errorf("expected surrender result, got %s", game.Result)
+	}
+
+	// Check payout is half the bet
+	payout := game.CalculatePayout()
+	if payout != 500 {
+		t.Errorf("expected payout of 500 (half bet), got %d", payout)
+	}
+}
+
+func TestSurrenderWrongPhase(t *testing.T) {
+	game := NewGame()
+
+	err := game.Surrender()
+	if err == nil {
+		t.Error("expected error when surrendering in wrong phase")
+	}
+}
+
+func TestSurrenderInGameOverPhase(t *testing.T) {
+	game := NewGame()
+	game.Phase = PhaseGameOver
+	game.PlayerHand.AddCard(Card{Rank: "K", Value: 10})
+	game.PlayerHand.AddCard(Card{Rank: "9", Value: 9})
+
+	err := game.Surrender()
+	if err == nil {
+		t.Error("expected error when surrendering in game over phase")
+	}
+}
+
+func TestSurrenderInDealerTurnPhase(t *testing.T) {
+	game := NewGame()
+	game.Phase = PhaseDealerTurn
+	game.PlayerHand.AddCard(Card{Rank: "K", Value: 10})
+	game.PlayerHand.AddCard(Card{Rank: "9", Value: 9})
+
+	err := game.Surrender()
+	if err == nil {
+		t.Error("expected error when surrendering in dealer turn phase")
+	}
+}
+
+func TestSurrenderAfterHit(t *testing.T) {
+	// Use deterministic deck
+	deck := []Card{
+		{Rank: "5", Suit: "♠", Value: 5},  // P1
+		{Rank: "6", Suit: "♠", Value: 6},  // D1
+		{Rank: "6", Suit: "♥", Value: 6},  // P2 (11 total)
+		{Rank: "K", Suit: "♠", Value: 10}, // D2
+		{Rank: "2", Suit: "♠", Value: 2},  // P hits (13 total)
+	}
+
+	game := NewGameWithDeck(deck)
+	game.PlaceBetNoShuffle(1000)
+
+	if game.Phase != PhasePlayerTurn {
+		t.Fatalf("expected player turn, got %s", game.Phase)
+	}
+
+	game.Hit()
+
+	if game.Phase != PhasePlayerTurn {
+		t.Fatalf("should still be player turn after hit, got %s", game.Phase)
+	}
+
+	err := game.Surrender()
+	if err == nil {
+		t.Error("expected error when surrendering after hit")
+	}
+}
+
+func TestSurrenderPayout(t *testing.T) {
+	// Test various bet amounts to ensure payout is always half
+	testCases := []struct {
+		bet            int64
+		expectedPayout int64
+	}{
+		{1000, 500},
+		{2000, 1000},
+		{500, 250},
+		{1500, 750},
+		{100, 50},
+	}
+
+	for _, tc := range testCases {
+		g := NewGame()
+		g.Bet = tc.bet
+		g.Result = ResultSurrender
+
+		payout := g.CalculatePayout()
+		if payout != tc.expectedPayout {
+			t.Errorf("for bet %d, expected payout %d, got %d", tc.bet, tc.expectedPayout, payout)
+		}
+	}
+}
+
+func TestGetValidActionsIncludesSurrender(t *testing.T) {
+	// Use deterministic deck
+	deck := []Card{
+		{Rank: "5", Suit: "♠", Value: 5},   // P1
+		{Rank: "6", Suit: "♠", Value: 6},   // D1
+		{Rank: "10", Suit: "♥", Value: 10}, // P2
+		{Rank: "K", Suit: "♠", Value: 10},  // D2
+	}
+
+	game := NewGameWithDeck(deck)
+	game.PlaceBetNoShuffle(1000)
+
+	actions := game.GetValidActions()
+
+	// Should have HIT, STAND, DOUBLEDOWN, SURRENDER
+	if len(actions) != 4 {
+		t.Errorf("expected 4 actions with 2 cards, got %d", len(actions))
+	}
+
+	hasSurrender := false
+	for _, action := range actions {
+		if action == "SURRENDER" {
+			hasSurrender = true
+			break
+		}
+	}
+
+	if !hasSurrender {
+		t.Error("expected SURRENDER in valid actions with 2 cards")
+	}
+}
+
+func TestGetValidActionsNoSurrenderAfterHit(t *testing.T) {
+	// Use deterministic deck
+	deck := []Card{
+		{Rank: "5", Suit: "♠", Value: 5},  // P1
+		{Rank: "6", Suit: "♠", Value: 6},  // D1
+		{Rank: "6", Suit: "♥", Value: 6},  // P2
+		{Rank: "K", Suit: "♠", Value: 10}, // D2
+		{Rank: "2", Suit: "♠", Value: 2},  // P hits
+	}
+
+	game := NewGameWithDeck(deck)
+	game.PlaceBetNoShuffle(1000)
+
+	game.Hit() // Now have 3 cards
+
+	actions := game.GetValidActions()
+
+	// Should only have HIT, STAND (no DOUBLEDOWN or SURRENDER after hitting)
+	if len(actions) != 2 {
+		t.Errorf("expected 2 actions after hit, got %d", len(actions))
+	}
+
+	for _, action := range actions {
+		if action == "SURRENDER" {
+			t.Error("SURRENDER should not be available after hitting")
+		}
+		if action == "DOUBLEDOWN" {
+			t.Error("DOUBLEDOWN should not be available after hitting")
+		}
+	}
+}
