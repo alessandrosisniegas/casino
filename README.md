@@ -55,9 +55,9 @@ QUIT                  # Disconnect from server
 - Week 1: Setup & Design (X)
 - Week 2: Authentication & Persistence (X)
 - Week 3: Core Blackjack (X)
-- Week 4: UI Foundations
-- Week 5: Statistics Tracking (MVP)
-- Week 6: Complete MVP (Testing & Polishing)
+- Week 4: UI Foundations (X)
+- Week 5: Statistics Tracking (MVP) (X)
+- Week 6: Complete MVP (Testing & Polishing) (X)
 - Week 7: Multiplayer Foundation
 - Week 8: Multiplayer Game Loop
 - Week 9: Multiplayer Enhancements
@@ -83,18 +83,18 @@ No process running on port 9090
 ```
 Client:
 ```
-➜  casino git:(main) ✗ make run-client
+➜  casino git:(main) make run-client                                            
 cd cmd/client && go run .
 Connected to Casino server at 127.0.0.1:9090
 Type 'help' for available commands or 'quit' to exit.
 
 OK Welcome to Casino! Use SIGNUP <username> <password> or LOGIN <username> <password>
 
-$ signup mark zuckerburg
-OK Account created for mark with balance $10000.00
+$ signup charles oliveira 
+OK Account created for charles with balance $10000.00
 
-$ login mark zuckerburg
-OK Welcome back, mark! Balance: $10000.00
+$ login charles oliveira
+OK Welcome back, charles! Balance: $10000.00
 
 $ help
 OK Available commands:
@@ -112,6 +112,7 @@ Blackjack Game:
   HIT                          - Draw another card
   STAND                        - End your turn
   DOUBLEDOWN                   - Double bet, draw one card, end turn
+  SURRENDER                    - Forfeit hand, get half bet back
 
 Other:
   HELP                         - Show this help message
@@ -126,91 +127,98 @@ Username & Password requirements:
 $ bet 500
 OK Game started!
 Bet: $500.00
-Player Hand: [6♥] [7♦] (Value: 13)
-Dealer Hand: [4♥] [Hidden]
+Player Hand: [7♠] [9♣] (Value: 16)
+Dealer Hand: [9♦] [Hidden]
 
-Actions: HIT, STAND, DOUBLEDOWN
+Actions: HIT, STAND, DOUBLEDOWN, SURRENDER
 
 $ doubledown
 OK Doubled down!
 Bet: $1000.00
-Player Hand: [6♥] [7♦] [4♦] (Value: 17)
-Dealer Hand: [4♥] [J♠] [2♥] [6♦] (Value: 22)
+Player Hand: [7♠] [9♣] [6♥] (Value: 22)
+Dealer Hand: [9♦] [5♦] (Value: 14)
 
-Result: You win!
-Payout: $2000.00
+Result: Bust! Dealer wins.
+Payout: $0.00
 
-
-$ balance
-OK Balance: $11000.00
 
 $ bet 1000
 OK Game started!
 Bet: $1000.00
-Player Hand: [3♣] [8♥] (Value: 11)
-Dealer Hand: [3♦] [Hidden]
+Player Hand: [9♥] [4♣] (Value: 13)
+Dealer Hand: [9♣] [Hidden]
 
-Actions: HIT, STAND, DOUBLEDOWN
+Actions: HIT, STAND, DOUBLEDOWN, SURRENDER
 
 $ hit
 OK
 Bet: $1000.00
-Player Hand: [3♣] [8♥] [Q♦] (Value: 21)
-Dealer Hand: [3♦] [Hidden]
+Player Hand: [9♥] [4♣] [6♥] (Value: 19)
+Dealer Hand: [9♣] [Hidden]
 
 Actions: HIT, STAND
 
 $ stand
 OK
 Bet: $1000.00
-Player Hand: [3♣] [8♥] [Q♦] (Value: 21)
-Dealer Hand: [3♦] [A♠] [A♦] [A♥] [6♣] [6♠] (Value: 18)
+Player Hand: [9♥] [4♣] [6♥] (Value: 19)
+Dealer Hand: [9♣] [2♥] [5♥] [Q♣] (Value: 26)
 
 Result: You win!
 Payout: $2000.00
 
 
-$ bet 2000
+$ bet 1500
 OK Game started!
-Bet: $2000.00
-Player Hand: [3♠] [5♦] (Value: 8)
-Dealer Hand: [4♠] [Hidden]
+Bet: $1500.00
+Player Hand: [K♥] [J♠] (Value: 20)
+Dealer Hand: [2♣] [Hidden]
 
-Actions: HIT, STAND, DOUBLEDOWN
-
-$ hit
-OK
-Bet: $2000.00
-Player Hand: [3♠] [5♦] [7♣] (Value: 15)
-Dealer Hand: [4♠] [Hidden]
-
-Actions: HIT, STAND
+Actions: HIT, STAND, DOUBLEDOWN, SURRENDER
 
 $ stand
 OK
-Bet: $2000.00
-Player Hand: [3♠] [5♦] [7♣] (Value: 15)
-Dealer Hand: [4♠] [5♠] [A♥] (Value: 20)
+Bet: $1500.00
+Player Hand: [K♥] [J♠] (Value: 20)
+Dealer Hand: [2♣] [K♠] [J♦] (Value: 22)
 
-Result: Dealer wins.
-Payout: $0.00
+Result: You win!
+Payout: $3000.00
+
+
+$ bet 2500
+OK Game started!
+Bet: $2500.00
+Player Hand: [9♠] [6♦] (Value: 15)
+Dealer Hand: [6♥] [Hidden]
+
+Actions: HIT, STAND, DOUBLEDOWN, SURRENDER
+
+$ surrender
+OK Surrendered!
+Bet: $2500.00
+Player Hand: [9♠] [6♦] (Value: 15)
+Dealer Hand: [6♥] [2♦] (Value: 8)
+
+Result: Surrendered - half bet returned.
+Payout: $1250.00
 
 
 $ balance
-OK Balance: $10000.00
+OK Balance: $10250.00
 
 $ stats
-OK Stats for mark:
-  Games Played: 3
+OK Stats for charles:
+  Games Played: 4
   Games Won: 2
-  Games Lost: 1
-  Win Rate: 66.7%
-  Total Bet: $4000.00
-  Total Won: $4000.00
-  Net: $0.00
-  Avg Bet: $1333.33
-  Biggest Win: $1000.00
-  Biggest Loss: $2000.00
+  Games Lost: 2
+  Win Rate: 50.0%
+  Total Bet: $6000.00
+  Total Won: $6250.00
+  Net: $250.00
+  Avg Bet: $1500.00
+  Biggest Win: $1500.00
+  Biggest Loss: $1250.00
 
 $ logout
 OK Logged out successfully
