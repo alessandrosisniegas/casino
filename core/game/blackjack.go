@@ -13,6 +13,10 @@ type Card struct {
 	Value int
 }
 
+func (c Card) String() string {
+	return fmt.Sprintf("[%s%s]", c.Rank, c.Suit)
+}
+
 type Deck struct {
 	Cards []Card
 }
@@ -37,6 +41,7 @@ const (
 	ResultDealerWin       GameResult = "DEALER_WIN"
 	ResultPush            GameResult = "PUSH"
 	ResultPlayerBlackjack GameResult = "PLAYER_BLACKJACK"
+	ResultPlayerBust      GameResult = "PLAYER_BUST"
 	ResultSurrender       GameResult = "SURRENDER"
 )
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"net"
 	"os"
@@ -13,11 +14,13 @@ import (
 )
 
 func main() {
-	// Get server address from environment in the future or use default
-	serverAddr := os.Getenv("CASINO_SERVER")
-	if serverAddr == "" {
-		serverAddr = "127.0.0.1:9090"
-	}
+	// Parse command-line flags
+	host := flag.String("host", "127.0.0.1", "Server host address")
+	port := flag.String("port", "9090", "Server port")
+	flag.Parse()
+
+	// Build server address
+	serverAddr := net.JoinHostPort(*host, *port)
 
 	conn, err := net.Dial("tcp", serverAddr)
 	if err != nil {
@@ -40,6 +43,11 @@ func readFromServer(conn net.Conn) {
 
 	for scanner.Scan() {
 		response := scanner.Text()
+
+		if response == "<<<PROMPT>>>" {
+			fmt.Print("\n$ ")
+			continue
+		}
 
 		// Don't print the prompt itself if server sends it
 		if response == "$" || response == ">" {

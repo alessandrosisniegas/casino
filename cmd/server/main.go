@@ -16,16 +16,28 @@ import (
 	"github.com/alessandrosisniegas/casino/core/vault"
 )
 
+type GameMode string
+
+const (
+	ModeLobby       GameMode = "LOBBY"
+	ModeSolo        GameMode = "SOLO"
+	ModeMultiplayer GameMode = "MULTIPLAYER"
+)
+
 type ClientState struct {
 	conn      net.Conn
 	sessionID string
 	user      *vault.User
-	game      *game.Game
+	mode      GameMode
+
+	soloGame  *game.Game
+	tableSeat *game.PlayerSeat
 }
 
 type Server struct {
 	authService *security.AuthService
 	db          *vault.DB
+	mainTable   *game.Table
 }
 
 func main() {
@@ -44,9 +56,12 @@ func main() {
 	// Initialize auth service
 	authService := security.NewAuthService(db)
 
+	mainTable := game.NewTable("main", 10_00, 1000_00, 4)
+
 	server := &Server{
 		authService: authService,
 		db:          db,
+		mainTable:   mainTable,
 	}
 
 	// Bind address:
@@ -141,7 +156,10 @@ func (s *Server) handleClient(conn net.Conn) {
 	// Set connection timeout
 	conn.SetReadDeadline(time.Now().Add(30 * time.Minute))
 
-	client := &ClientState{conn: conn}
+	client := &ClientState{
+		conn: conn,
+		mode: ModeLobby,
+	}
 	scanner := bufio.NewScanner(conn)
 
 	s.writeResponse(client, "OK Welcome to Casino! Use SIGNUP <username> <password> or LOGIN <username> <password>")
@@ -183,6 +201,16 @@ func (s *Server) handleCommand(client *ClientState, command string, args []strin
 		s.handleStats(client, args)
 	case "WHOAMI":
 		s.handleWhoami(client, args)
+	case "SOLO":
+		s.handleSolo(client, args)
+	case "MULTIPLAYER", "MP":
+		s.handleMultiplayer(client, args)
+	case "LEAVE":
+		s.handleLeave(client, args)
+	case "READY":
+		s.handleReady(client, args)
+	case "PLAYERS":
+		s.handlePlayers(client, args)
 	case "BET":
 		s.handleBet(client, args)
 	case "HIT":
@@ -234,8 +262,12 @@ func (s *Server) handleLogin(client *ClientState, args []string) {
 
 	client.sessionID = sessionID
 	client.user = user
+	client.mode = ModeLobby
 
-	s.writeResponse(client, fmt.Sprintf("OK Welcome back, %s! Balance: $%.2f", user.Username, float64(user.Balance)/100))
+	response := fmt.Sprintf("OK Welcome back, %s! Balance: $%.2f\n", user.Username, float64(user.Balance)/100)
+	response += "Available modes: SOLO, MULTIPLAYER\n"
+	response += "Use SOLO or MULTIPLAYER to choose a mode, or BET <amount> for quick solo play."
+	s.writeResponse(client, response)
 }
 
 func (s *Server) handleLogout(client *ClientState, _ []string) {
@@ -325,20 +357,42 @@ func (s *Server) handleHelp(client *ClientState, _ []string) {
 	help += "  BALANCE                      - Check your current balance\n"
 	help += "  STATS                        - View your game statistics\n"
 	help += "  WHOAMI                       - Show current login status\n"
-	help += "\nBlackjack Game:\n"
-	help += "  BET <amount>                 - Start a game and place bet (in dollars)\n"
-	help += "  HIT                          - Draw another card\n"
-	help += "  STAND                        - End your turn\n"
-	help += "  DOUBLEDOWN                   - Double bet, draw one card, end turn\n"
-	help += "  SURRENDER                    - Forfeit hand, get half bet back\n"
+
+	if client.user != nil {
+		help += "\nGame Modes:\n"
+		if client.mode == ModeLobby {
+			help += "  SOLO                         - Enter solo play mode\n"
+			help += "  MULTIPLAYER                  - Join multiplayer table\n"
+			help += "  BET <amount>                 - Quick solo play (auto-enter solo mode)\n"
+		} else if client.mode == ModeSolo {
+			help += "  Current mode: SOLO\n"
+			help += "  LEAVE                        - Return to lobby\n"
+		} else if client.mode == ModeMultiplayer {
+			help += "  Current mode: MULTIPLAYER\n"
+			help += "  LEAVE                        - Leave table and return to lobby\n"
+			help += "  READY                        - Mark ready to start round\n"
+			help += "  PLAYERS                      - Show players at table\n"
+		}
+
+		help += "\nBlackjack Actions:\n"
+		help += "  BET <amount>                 - Place bet (in dollars)\n"
+		help += "  HIT                          - Draw another card\n"
+		help += "  STAND                        - End your turn\n"
+		help += "  DOUBLEDOWN                   - Double bet, draw one card, end turn\n"
+		help += "  SURRENDER                    - Forfeit hand, get half bet back\n"
+	}
+
 	help += "\nOther:\n"
 	help += "  HELP                         - Show this help message\n"
 	help += "  QUIT                         - Disconnect from server\n"
-	help += "\nUsername & Password requirements:\n"
-	help += "  - 2-30 characters long\n"
-	help += "  - Letters, numbers, and underscores only\n"
-	help += "  - No whitespace allowed\n"
-	help += "  - Password cannot be the same as username"
+
+	if client.user == nil {
+		help += "\nUsername & Password requirements:\n"
+		help += "  - 2-30 characters long\n"
+		help += "  - Letters, numbers, and underscores only\n"
+		help += "  - No whitespace allowed\n"
+		help += "  - Password cannot be the same as username"
+	}
 
 	s.writeResponse(client, help)
 }
@@ -357,6 +411,119 @@ func (s *Server) showStats() {
 func (s *Server) showUsers() {
 	fmt.Println("Use SQLite to view users:")
 	fmt.Println("  sqlite3 data/casino.db \"SELECT id, username, balance/100.0, created_at FROM users;\"")
+}
+
+func (s *Server) handleSolo(client *ClientState, _ []string) {
+	if client.user == nil {
+		s.writeResponse(client, "ERROR Please login first")
+		return
+	}
+
+	if client.mode == ModeMultiplayer {
+		s.mainTable.RemovePlayer(client.sessionID)
+		s.mainTable.BroadcastToAll(fmt.Sprintf("\n%s left the table", client.user.Username))
+	}
+
+	client.mode = ModeSolo
+	client.soloGame = nil
+	client.tableSeat = nil
+
+	s.writeResponse(client, "OK Entered solo mode. Place a bet to start playing.")
+}
+
+func (s *Server) handleMultiplayer(client *ClientState, _ []string) {
+	if client.user == nil {
+		s.writeResponse(client, "ERROR Please login first")
+		return
+	}
+
+	if client.mode == ModeMultiplayer {
+		s.writeResponse(client, "ERROR Already in multiplayer mode")
+		return
+	}
+
+	if err := s.mainTable.AddPlayer(client.sessionID, client.user.Username, client.conn); err != nil {
+		s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+		return
+	}
+
+	client.mode = ModeMultiplayer
+	client.soloGame = nil
+
+	playerCount := s.mainTable.PlayerCount()
+	response := fmt.Sprintf("OK Joined multiplayer table (%d/%d players)\n", playerCount, s.mainTable.MaxPlayers)
+	response += s.mainTable.GetPlayerList()
+	response += "Type READY when you're ready to play."
+	s.writeResponse(client, response)
+
+	s.mainTable.BroadcastToOthers(client.sessionID, fmt.Sprintf("\n%s joined the table (%d/%d players)",
+		client.user.Username, playerCount, s.mainTable.MaxPlayers))
+}
+
+func (s *Server) handleLeave(client *ClientState, _ []string) {
+	if client.user == nil {
+		s.writeResponse(client, "ERROR Please login first")
+		return
+	}
+
+	if client.mode == ModeLobby {
+		s.writeResponse(client, "ERROR Already in lobby")
+		return
+	}
+
+	modeName := string(client.mode)
+
+	if client.mode == ModeMultiplayer {
+		s.mainTable.RemovePlayer(client.sessionID)
+		s.mainTable.BroadcastToAll(fmt.Sprintf("\n%s left the table", client.user.Username))
+	}
+
+	client.mode = ModeLobby
+	client.soloGame = nil
+	client.tableSeat = nil
+
+	response := fmt.Sprintf("OK Left %s mode. Back in lobby.\n", strings.ToLower(modeName))
+	response += "Available modes: SOLO, MULTIPLAYER"
+	s.writeResponse(client, response)
+}
+
+func (s *Server) handleReady(client *ClientState, _ []string) {
+	if client.user == nil {
+		s.writeResponse(client, "ERROR Please login first")
+		return
+	}
+
+	if client.mode != ModeMultiplayer {
+		s.writeResponse(client, "ERROR Only available in multiplayer mode")
+		return
+	}
+
+	if err := s.mainTable.SetReady(client.sessionID, true); err != nil {
+		s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+		return
+	}
+
+	s.writeResponse(client, "OK Marked ready. Waiting for other players...")
+	s.mainTable.BroadcastToOthers(client.sessionID, fmt.Sprintf("\n%s is ready!", client.user.Username))
+
+	if s.mainTable.AllPlayersReady() {
+		go s.startMultiplayerRound()
+	}
+}
+
+func (s *Server) handlePlayers(client *ClientState, _ []string) {
+	if client.user == nil {
+		s.writeResponse(client, "ERROR Please login first")
+		return
+	}
+
+	if client.mode != ModeMultiplayer {
+		s.writeResponse(client, "ERROR Only available in multiplayer mode")
+		return
+	}
+
+	response := "OK " + s.mainTable.GetPlayerList()
+	s.writeResponse(client, response)
 }
 
 // Blackjack game handlers
@@ -396,34 +563,53 @@ func (s *Server) handleBet(client *ClientState, args []string) {
 		return
 	}
 
-	client.game = game.NewGame()
-	if err := client.game.PlaceBet(betCents); err != nil {
-		s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
-		return
-	}
-
-	newBalance := client.user.Balance - betCents
-	if err := s.authService.UpdateBalance(client.user.ID, newBalance); err != nil {
-		s.writeResponse(client, fmt.Sprintf("ERROR Failed to update balance: %s", err.Error()))
-		return
-	}
-	client.user.Balance = newBalance
-
-	// Send game state
-	response := fmt.Sprintf("OK Game started!\n%s", client.game.GetGameState(true))
-
-	// If game is over (blackjack), handle payout immediately
-	if client.game.Phase == game.PhaseGameOver {
-		s.handleGameOver(client)
-	} else {
-		// Show only valid actions
-		validActions := client.game.GetValidActions()
-		if len(validActions) > 0 {
-			response += "\nActions: " + strings.Join(validActions, ", ")
+	if client.mode == ModeMultiplayer {
+		if err := s.mainTable.PlaceBet(client.sessionID, betCents); err != nil {
+			s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+			return
 		}
-	}
 
-	s.writeResponse(client, response)
+		newBalance := client.user.Balance - betCents
+		if err := s.authService.UpdateBalance(client.user.ID, newBalance); err != nil {
+			s.writeResponse(client, fmt.Sprintf("ERROR Failed to update balance: %s", err.Error()))
+			return
+		}
+		client.user.Balance = newBalance
+
+		s.writeResponse(client, fmt.Sprintf("OK Bet placed: $%.2f", float64(betCents)/100))
+		s.mainTable.BroadcastToOthers(client.sessionID, fmt.Sprintf("\n%s bets $%.2f", client.user.Username, float64(betCents)/100))
+
+	} else {
+		if client.mode == ModeLobby {
+			client.mode = ModeSolo
+		}
+
+		client.soloGame = game.NewGame()
+		if err := client.soloGame.PlaceBet(betCents); err != nil {
+			s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+			return
+		}
+
+		newBalance := client.user.Balance - betCents
+		if err := s.authService.UpdateBalance(client.user.ID, newBalance); err != nil {
+			s.writeResponse(client, fmt.Sprintf("ERROR Failed to update balance: %s", err.Error()))
+			return
+		}
+		client.user.Balance = newBalance
+
+		response := fmt.Sprintf("OK Game started!\n%s", client.soloGame.GetGameState(true))
+
+		if client.soloGame.Phase == game.PhaseGameOver {
+			s.handleSoloGameOver(client)
+		} else {
+			validActions := client.soloGame.GetValidActions()
+			if len(validActions) > 0 {
+				response += "\nActions: " + strings.Join(validActions, ", ")
+			}
+		}
+
+		s.writeResponse(client, response)
+	}
 }
 
 func (s *Server) handleHit(client *ClientState, _ []string) {
@@ -432,29 +618,59 @@ func (s *Server) handleHit(client *ClientState, _ []string) {
 		return
 	}
 
-	if client.game == nil {
-		s.writeResponse(client, "ERROR No active game. Use BET <amount> to start a game")
-		return
-	}
-
-	if err := client.game.Hit(); err != nil {
-		s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
-		return
-	}
-
-	response := fmt.Sprintf("OK\n%s", client.game.GetGameState(true))
-
-	if client.game.Phase == game.PhaseGameOver {
-		s.handleGameOver(client)
-	} else {
-		// Show only valid actions
-		validActions := client.game.GetValidActions()
-		if len(validActions) > 0 {
-			response += "\nActions: " + strings.Join(validActions, ", ")
+	if client.mode == ModeMultiplayer {
+		if err := s.mainTable.PlayerHit(client.sessionID); err != nil {
+			s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+			return
 		}
-	}
 
-	s.writeResponse(client, response)
+		player := s.mainTable.GetPlayer(client.sessionID)
+		card := player.Hand.Cards[len(player.Hand.Cards)-1]
+
+		s.writeResponse(client, fmt.Sprintf("OK You hit and got %s\nYour hand: %s (Value: %d)",
+			card.String(), player.Hand.String(), player.Hand.Value()))
+
+		s.mainTable.BroadcastToOthers(client.sessionID, fmt.Sprintf("\n%s hits and gets %s (now at %d)",
+			client.user.Username, card.String(), player.Hand.Value()))
+
+		if player.HasActed {
+			go s.advanceMultiplayerTurn(true, true)
+		} else {
+			actions := "Actions: HIT, STAND\n"
+			if len(player.Hand.Cards) == 2 {
+				actions = "Actions: HIT, STAND, DOUBLEDOWN, SURRENDER\n"
+			}
+			client.conn.Write([]byte("\nYOUR TURN (30 seconds)\n"))
+
+			tableState := s.mainTable.GetTableStateWithoutTurnMarker(true)
+			client.conn.Write([]byte(tableState))
+
+			client.conn.Write([]byte(actions))
+		}
+	} else {
+		if client.soloGame == nil {
+			s.writeResponse(client, "ERROR No active game. Use BET <amount> to start a game")
+			return
+		}
+
+		if err := client.soloGame.Hit(); err != nil {
+			s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+			return
+		}
+
+		response := fmt.Sprintf("OK\n%s", client.soloGame.GetGameState(true))
+
+		if client.soloGame.Phase == game.PhaseGameOver {
+			s.handleSoloGameOver(client)
+		} else {
+			validActions := client.soloGame.GetValidActions()
+			if len(validActions) > 0 {
+				response += "\nActions: " + strings.Join(validActions, ", ")
+			}
+		}
+
+		s.writeResponse(client, response)
+	}
 }
 
 func (s *Server) handleStand(client *ClientState, _ []string) {
@@ -463,20 +679,34 @@ func (s *Server) handleStand(client *ClientState, _ []string) {
 		return
 	}
 
-	if client.game == nil {
-		s.writeResponse(client, "ERROR No active game. Use BET <amount> to start a game")
-		return
+	if client.mode == ModeMultiplayer {
+		if err := s.mainTable.PlayerStand(client.sessionID); err != nil {
+			s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+			return
+		}
+
+		player := s.mainTable.GetPlayer(client.sessionID)
+		s.writeResponse(client, fmt.Sprintf("OK You stand with %d", player.Hand.Value()))
+		s.mainTable.BroadcastToOthers(client.sessionID, fmt.Sprintf("\n%s stands with %d",
+			client.user.Username, player.Hand.Value()))
+
+		go s.advanceMultiplayerTurn(true, true)
+	} else {
+		if client.soloGame == nil {
+			s.writeResponse(client, "ERROR No active game. Use BET <amount> to start a game")
+			return
+		}
+
+		if err := client.soloGame.Stand(); err != nil {
+			s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+			return
+		}
+
+		response := fmt.Sprintf("OK\n%s", client.soloGame.GetGameState(false))
+		s.writeResponse(client, response)
+
+		s.handleSoloGameOver(client)
 	}
-
-	if err := client.game.Stand(); err != nil {
-		s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
-		return
-	}
-
-	response := fmt.Sprintf("OK\n%s", client.game.GetGameState(false))
-	s.writeResponse(client, response)
-
-	s.handleGameOver(client)
 }
 
 func (s *Server) handleDoubleDown(client *ClientState, _ []string) {
@@ -485,34 +715,71 @@ func (s *Server) handleDoubleDown(client *ClientState, _ []string) {
 		return
 	}
 
-	if client.game == nil {
-		s.writeResponse(client, "ERROR No active game. Use BET <amount> to start a game")
-		return
+	if client.mode == ModeMultiplayer {
+		player := s.mainTable.GetPlayer(client.sessionID)
+		if player == nil {
+			s.writeResponse(client, "ERROR Not at table")
+			return
+		}
+
+		if client.user.Balance < player.Bet {
+			s.writeResponse(client, fmt.Sprintf("ERROR Insufficient balance to double down. You need $%.2f more", float64(player.Bet)/100))
+			return
+		}
+
+		newBalance := client.user.Balance - player.Bet
+		if err := s.authService.UpdateBalance(client.user.ID, newBalance); err != nil {
+			s.writeResponse(client, fmt.Sprintf("ERROR Failed to update balance: %s", err.Error()))
+			return
+		}
+		client.user.Balance = newBalance
+
+		if err := s.mainTable.PlayerDoubleDown(client.sessionID); err != nil {
+			// Refund on error
+			s.authService.UpdateBalance(client.user.ID, client.user.Balance+player.Bet)
+			client.user.Balance += player.Bet
+			s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+			return
+		}
+
+		card := player.Hand.Cards[len(player.Hand.Cards)-1]
+		s.writeResponse(client, fmt.Sprintf("OK Doubled down! Got %s\nYour hand: %s (Value: %d)",
+			card.String(), player.Hand.String(), player.Hand.Value()))
+		s.mainTable.BroadcastToOthers(client.sessionID, fmt.Sprintf("\n%s doubles down and gets %s (now at %d)",
+			client.user.Username, card.String(), player.Hand.Value()))
+
+		go s.advanceMultiplayerTurn(true, true) // true = add newline, true = show table state
+	} else {
+		// Solo mode
+		if client.soloGame == nil {
+			s.writeResponse(client, "ERROR No active game. Use BET <amount> to start a game")
+			return
+		}
+
+		if client.user.Balance < client.soloGame.Bet {
+			s.writeResponse(client, fmt.Sprintf("ERROR Insufficient balance to double down. You need $%.2f more", float64(client.soloGame.Bet)/100))
+			return
+		}
+
+		newBalance := client.user.Balance - client.soloGame.Bet
+		if err := s.authService.UpdateBalance(client.user.ID, newBalance); err != nil {
+			s.writeResponse(client, fmt.Sprintf("ERROR Failed to update balance: %s", err.Error()))
+			return
+		}
+		client.user.Balance = newBalance
+
+		if err := client.soloGame.DoubleDown(); err != nil {
+			s.authService.UpdateBalance(client.user.ID, client.user.Balance+client.soloGame.Bet/2)
+			client.user.Balance += client.soloGame.Bet / 2
+			s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+			return
+		}
+
+		response := fmt.Sprintf("OK Doubled down!\n%s", client.soloGame.GetGameState(false))
+		s.writeResponse(client, response)
+
+		s.handleSoloGameOver(client)
 	}
-
-	if client.user.Balance < client.game.Bet {
-		s.writeResponse(client, fmt.Sprintf("ERROR Insufficient balance to double down. You need $%.2f more", float64(client.game.Bet)/100))
-		return
-	}
-
-	newBalance := client.user.Balance - client.game.Bet
-	if err := s.authService.UpdateBalance(client.user.ID, newBalance); err != nil {
-		s.writeResponse(client, fmt.Sprintf("ERROR Failed to update balance: %s", err.Error()))
-		return
-	}
-	client.user.Balance = newBalance
-
-	if err := client.game.DoubleDown(); err != nil {
-		s.authService.UpdateBalance(client.user.ID, client.user.Balance+client.game.Bet/2)
-		client.user.Balance += client.game.Bet / 2
-		s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
-		return
-	}
-
-	response := fmt.Sprintf("OK Doubled down!\n%s", client.game.GetGameState(false))
-	s.writeResponse(client, response)
-
-	s.handleGameOver(client)
 }
 
 func (s *Server) handleSurrender(client *ClientState, _ []string) {
@@ -521,24 +788,38 @@ func (s *Server) handleSurrender(client *ClientState, _ []string) {
 		return
 	}
 
-	if client.game == nil {
-		s.writeResponse(client, "ERROR No active game. Use BET <amount> to start a game")
-		return
+	if client.mode == ModeMultiplayer {
+		// Multiplayer mode
+		if err := s.mainTable.PlayerSurrender(client.sessionID); err != nil {
+			s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+			return
+		}
+
+		s.writeResponse(client, "OK Surrendered! You'll get half your bet back.")
+		s.mainTable.BroadcastToOthers(client.sessionID, fmt.Sprintf("\n%s surrenders", client.user.Username))
+
+		go s.advanceMultiplayerTurn(true, true) // true = add newline, true = show table state
+	} else {
+		// Solo mode
+		if client.soloGame == nil {
+			s.writeResponse(client, "ERROR No active game. Use BET <amount> to start a game")
+			return
+		}
+
+		if err := client.soloGame.Surrender(); err != nil {
+			s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
+			return
+		}
+
+		response := fmt.Sprintf("OK Surrendered!\n%s", client.soloGame.GetGameState(false))
+		s.writeResponse(client, response)
+
+		s.handleSoloGameOver(client)
 	}
-
-	if err := client.game.Surrender(); err != nil {
-		s.writeResponse(client, fmt.Sprintf("ERROR %s", err.Error()))
-		return
-	}
-
-	response := fmt.Sprintf("OK Surrendered!\n%s", client.game.GetGameState(false))
-	s.writeResponse(client, response)
-
-	s.handleGameOver(client)
 }
 
-func (s *Server) handleGameOver(client *ClientState) {
-	payout := client.game.CalculatePayout()
+func (s *Server) handleSoloGameOver(client *ClientState) {
+	payout := client.soloGame.CalculatePayout()
 
 	newBalance := client.user.Balance + payout
 	if err := s.authService.UpdateBalance(client.user.ID, newBalance); err != nil {
@@ -553,21 +834,21 @@ func (s *Server) handleGameOver(client *ClientState) {
 	}
 
 	stats.GamesPlayed++
-	stats.TotalBet += client.game.Bet
+	stats.TotalBet += client.soloGame.Bet
 
-	switch client.game.Result {
+	switch client.soloGame.Result {
 	case game.ResultPlayerWin, game.ResultPlayerBlackjack:
 		stats.GamesWon++
 		// Add full payout to TotalWon (includes returned bet + profit)
 		stats.TotalWon += payout
 		// BiggestWin tracks the profit amount only
-		winAmount := payout - client.game.Bet
+		winAmount := payout - client.soloGame.Bet
 		if winAmount > stats.BiggestWin {
 			stats.BiggestWin = winAmount
 		}
 	case game.ResultDealerWin:
 		stats.GamesLost++
-		lossAmount := client.game.Bet
+		lossAmount := client.soloGame.Bet
 		if lossAmount > stats.BiggestLoss {
 			stats.BiggestLoss = lossAmount
 		}
@@ -576,13 +857,13 @@ func (s *Server) handleGameOver(client *ClientState) {
 		// Add the half-bet payout to TotalWon
 		stats.TotalWon += payout
 		// Loss is half the bet
-		lossAmount := client.game.Bet / 2
+		lossAmount := client.soloGame.Bet / 2
 		if lossAmount > stats.BiggestLoss {
 			stats.BiggestLoss = lossAmount
 		}
 	case game.ResultPush:
 		// Push returns the bet, add to TotalWon
-		stats.TotalWon += client.game.Bet
+		stats.TotalWon += client.soloGame.Bet
 	}
 
 	if err := s.db.UpdateUserStats(stats); err != nil {
@@ -590,5 +871,215 @@ func (s *Server) handleGameOver(client *ClientState) {
 	}
 
 	// Clear the game
-	client.game = nil
+	client.soloGame = nil
+}
+
+// Multiplayer round flow functions
+
+func (s *Server) startMultiplayerRound() {
+	time.Sleep(2 * time.Second) // Brief delay before starting
+
+	s.mainTable.StartBettingPhase()
+	s.mainTable.BroadcastToAll("\n--- NEW ROUND ---\nPlace your bets! (30 seconds)\nUse: BET <amount>")
+
+	// Wait for bets with timeout
+	s.mainTable.WaitForBets(30 * time.Second)
+
+	// Check if enough players bet
+	activePlayers := 0
+	for _, p := range s.mainTable.Players {
+		if p.IsActive && p.Bet > 0 {
+			activePlayers++
+		}
+	}
+
+	if activePlayers < 2 {
+		s.mainTable.BroadcastToAll("Not enough players bet. Returning to lobby...")
+		s.mainTable.EndRound()
+		return
+	}
+
+	// Deal cards
+	s.dealMultiplayerCards()
+}
+
+func (s *Server) dealMultiplayerCards() {
+	s.mainTable.BroadcastToAllNoPrompt("\n--- DEALING ---")
+
+	if err := s.mainTable.DealInitialCards(); err != nil {
+		s.mainTable.BroadcastToAll(fmt.Sprintf("ERROR: %s", err.Error()))
+		s.mainTable.EndRound()
+		return
+	}
+
+	time.Sleep(1 * time.Second)
+
+	// Show table state to everyone (without turn indicators)
+	tableState := s.mainTable.GetTableStateWithoutTurnMarker(true)
+	s.mainTable.BroadcastToAllNoPrompt(tableState)
+
+	// Check if game is already over (dealer blackjack or all player blackjacks)
+	if s.mainTable.Phase == game.TablePhaseDealerTurn {
+		s.playMultiplayerDealerTurn()
+		return
+	}
+
+	// Start player turns
+	s.promptCurrentPlayer(false, false) // false = no leading newline, false = don't show table (already shown)
+}
+
+func (s *Server) promptCurrentPlayer(addLeadingNewline bool, showTableState bool) {
+	currentPlayer := s.mainTable.GetCurrentPlayer()
+	if currentPlayer == nil {
+		// All players done, move to dealer turn
+		s.playMultiplayerDealerTurn()
+		return
+	}
+
+	// Skip if player already acted (blackjack or bust)
+	if currentPlayer.HasActed {
+		s.advanceMultiplayerTurn(addLeadingNewline, showTableState) // Pass through both flags
+		return
+	}
+
+	// Announce whose turn it is to other players
+	turnAnnouncement := fmt.Sprintf("%s's turn...", currentPlayer.Username)
+	if addLeadingNewline {
+		turnAnnouncement = "\n" + turnAnnouncement
+	}
+	s.mainTable.BroadcastToOthers(currentPlayer.SessionID, turnAnnouncement)
+
+	// Show detailed turn info to the current player
+	turnMsg := "YOUR TURN (30 seconds)\n"
+	if addLeadingNewline {
+		turnMsg = "\n" + turnMsg
+	}
+	currentPlayer.Connection.Write([]byte(turnMsg))
+
+	// Show current table state so player can see all hands (only if requested)
+	if showTableState {
+		tableState := s.mainTable.GetTableStateWithoutTurnMarker(true) // true = hide dealer's hole card
+		currentPlayer.Connection.Write([]byte(tableState))
+	}
+
+	currentPlayer.Connection.Write([]byte("Actions: HIT, STAND, DOUBLEDOWN, SURRENDER\n"))
+	currentPlayer.Connection.Write([]byte("<<<PROMPT>>>\n"))
+}
+
+func (s *Server) advanceMultiplayerTurn(addLeadingNewline bool, showTableState bool) {
+	time.Sleep(500 * time.Millisecond) // Brief pause between turns
+
+	if s.mainTable.AdvanceTurn() {
+		// More players to act
+		s.promptCurrentPlayer(addLeadingNewline, showTableState)
+	} else {
+		// All players done, dealer's turn
+		s.playMultiplayerDealerTurn()
+	}
+}
+
+func (s *Server) playMultiplayerDealerTurn() {
+	time.Sleep(1 * time.Second)
+
+	s.mainTable.BroadcastToAllNoPrompt("\n--- DEALER TURN ---")
+
+	if err := s.mainTable.PlayDealerHand(); err != nil {
+		log.Printf("Error playing dealer hand: %v", err)
+	}
+
+	time.Sleep(1 * time.Second)
+
+	// Show final dealer hand
+	dealerState := fmt.Sprintf("Dealer: %s (Value: %d)", s.mainTable.Dealer.String(), s.mainTable.Dealer.Value())
+	s.mainTable.BroadcastToAllNoPrompt(dealerState)
+
+	// Calculate payouts
+	s.mainTable.CalculatePayouts()
+
+	time.Sleep(1 * time.Second)
+
+	// Show results and update balances
+	s.mainTable.BroadcastToAllNoPrompt("--- RESULTS ---")
+
+	for _, player := range s.mainTable.Players {
+		if !player.IsActive || player.Bet == 0 {
+			continue
+		}
+
+		// Update player balance - get user by session
+		session, err := s.db.GetSession(player.SessionID)
+		if err != nil {
+			log.Printf("Failed to get session %s: %v", player.SessionID, err)
+			continue
+		}
+
+		user, err := s.db.GetUserByID(session.UserID)
+		if err != nil {
+			log.Printf("Failed to get user %d: %v", session.UserID, err)
+			continue
+		}
+
+		newBalance := user.Balance + player.Payout
+		if err := s.authService.UpdateBalance(user.ID, newBalance); err != nil {
+			log.Printf("Failed to update balance for user %d: %v", user.ID, err)
+		}
+
+		// Update stats
+		stats, err := s.authService.GetUserStats(user.ID)
+		if err != nil {
+			log.Printf("Failed to get stats for user %d: %v", user.ID, err)
+			continue
+		}
+
+		stats.GamesPlayed++
+		stats.TotalBet += player.Bet
+
+		switch player.Result {
+		case game.ResultPlayerWin, game.ResultPlayerBlackjack:
+			stats.GamesWon++
+			stats.TotalWon += player.Payout
+			winAmount := player.Payout - player.Bet
+			if winAmount > stats.BiggestWin {
+				stats.BiggestWin = winAmount
+			}
+		case game.ResultDealerWin, game.ResultPlayerBust:
+			stats.GamesLost++
+			if player.Bet > stats.BiggestLoss {
+				stats.BiggestLoss = player.Bet
+			}
+		case game.ResultSurrender:
+			stats.GamesLost++
+			stats.TotalWon += player.Payout
+			lossAmount := player.Bet / 2
+			if lossAmount > stats.BiggestLoss {
+				stats.BiggestLoss = lossAmount
+			}
+		case game.ResultPush:
+			stats.TotalWon += player.Bet
+		}
+
+		if err := s.db.UpdateUserStats(stats); err != nil {
+			log.Printf("Failed to update stats for user %d: %v", user.ID, err)
+		}
+
+		// Broadcast result
+		resultMsg := fmt.Sprintf("%s: %s → %s", player.Username, player.Result, formatPayout(player.Payout, player.Bet))
+		s.mainTable.BroadcastToAllNoPrompt(resultMsg)
+	}
+
+	// End round and return to lobby
+	time.Sleep(3 * time.Second)
+	s.mainTable.EndRound()
+	s.mainTable.BroadcastToAll("Round complete! Type READY to play again.")
+}
+
+func formatPayout(payout, bet int64) string {
+	if payout == 0 {
+		return fmt.Sprintf("LOSS (-$%.2f)", float64(bet)/100)
+	} else if payout == bet {
+		return "PUSH ($0.00)"
+	} else {
+		profit := payout - bet
+		return fmt.Sprintf("WIN (+$%.2f)", float64(profit)/100)
+	}
 }
