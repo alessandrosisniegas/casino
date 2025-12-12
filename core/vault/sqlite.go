@@ -35,6 +35,11 @@ type UserStats struct {
 	BiggestLoss int64 `json:"biggest_loss"`
 }
 
+type UserPreferences struct {
+	UserID    int  `json:"user_id"`
+	ShowStats bool `json:"show_stats"`
+}
+
 type DB struct {
 	conn *sql.DB
 }
@@ -86,6 +91,11 @@ func (db *DB) initTables() error {
 			biggest_loss INTEGER DEFAULT 0,
 			FOREIGN KEY (user_id) REFERENCES users (id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS user_preferences (
+			user_id INTEGER PRIMARY KEY,
+			show_stats BOOLEAN DEFAULT FALSE,
+			FOREIGN KEY (user_id) REFERENCES users (id)
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)`,
 	}
@@ -113,6 +123,10 @@ func (db *DB) CreateUser(username, hashedPassword string) (*User, error) {
 
 	if err := db.initUserStats(int(id)); err != nil {
 		return nil, fmt.Errorf("failed to initialize user stats: %w", err)
+	}
+
+	if err := db.initUserPreferences(int(id)); err != nil {
+		return nil, fmt.Errorf("failed to initialize user preferences: %w", err)
 	}
 
 	return db.GetUserByID(int(id))
@@ -238,6 +252,45 @@ func (db *DB) UpdateUserStats(stats *UserStats) error {
 		stats.TotalBet, stats.TotalWon, stats.BiggestWin, stats.BiggestLoss, stats.UserID)
 	if err != nil {
 		return fmt.Errorf("failed to update user stats: %w", err)
+	}
+	return nil
+}
+
+func (db *DB) initUserPreferences(userID int) error {
+	query := `INSERT INTO user_preferences (user_id, show_stats) VALUES (?, FALSE)`
+	_, err := db.conn.Exec(query, userID)
+	if err != nil {
+		return fmt.Errorf("failed to initialize user preferences: %w", err)
+	}
+	return nil
+}
+
+// InitUserPreferences is a public wrapper for initializing user preferences (for existing users)
+func (db *DB) InitUserPreferences(userID int) error {
+	return db.initUserPreferences(userID)
+}
+
+func (db *DB) GetUserPreferences(userID int) (*UserPreferences, error) {
+	query := `SELECT user_id, show_stats FROM user_preferences WHERE user_id = ?`
+	row := db.conn.QueryRow(query, userID)
+
+	var prefs UserPreferences
+	err := row.Scan(&prefs.UserID, &prefs.ShowStats)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("user preferences not found")
+		}
+		return nil, fmt.Errorf("failed to get user preferences: %w", err)
+	}
+
+	return &prefs, nil
+}
+
+func (db *DB) UpdateUserPreferences(userID int, showStats bool) error {
+	query := `UPDATE user_preferences SET show_stats = ? WHERE user_id = ?`
+	_, err := db.conn.Exec(query, showStats, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update user preferences: %w", err)
 	}
 	return nil
 }

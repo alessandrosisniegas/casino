@@ -37,6 +37,13 @@ BALANCE               # Check your current balance
 STATS                 # View your game statistics
 ```
 
+**Probability Analysis:**
+```
+PROBSTATS             # Show current stats setting
+PROBSTATS ON          # Enable probability display
+PROBSTATS OFF         # Disable probability display
+```
+
 **Other:**
 ```
 HELP                  # Show all available commands
@@ -112,6 +119,59 @@ $ go run cmd/client/main.go --host 192.168.1.100
 $ go run cmd/client/main.go --host 127.0.0.1 --port 8080
 ```
 
+## Probability Analysis
+
+The casino includes optional real-time probability analysis to help players make informed decisions:
+
+### Features
+- **Bust Probability** - Shows the % chance of busting on the next hit and which cards would bust
+- **Card Counting** - Hi-Lo system with running count, true count, and player edge estimation
+- **Basic Strategy** - Suggests the optimal action based on your hand and dealer's upcard
+
+### Usage
+Enable probability stats:
+```bash
+$ PROBSTATS ON
+OK Probability stats display enabled
+```
+
+When enabled, you'll see analysis during your turn:
+```
+Your hand: [K♠] [6♥] (Value: 16)
+Dealer: [10♥] [Hidden]
+
+PROBABILITY ANALYSIS:
+  Bust probability: 61.5% (busts on: 6,7,8,9,10,J,Q,K,A)
+  Running count: -3 | True count: -1.5 | House edge: ~0.75%
+  Basic strategy: STAND
+
+Actions: HIT, STAND, DOUBLEDOWN, SURRENDER
+```
+
+Disable when not needed:
+```bash
+$ PROBSTATS OFF
+OK Probability stats display disabled
+```
+
+**Privacy:** In multiplayer mode, only you see your probability stats. Other players cannot see your analysis.
+
+### How It Works
+
+**Card Counting (Hi-Lo System)**
+- Low cards (2-6): +1 point (favorable when removed)
+- Neutral cards (7-9): 0 points
+- High cards (10-A): -1 point (unfavorable when removed)
+
+**True Count** = Running Count ÷ Decks Remaining
+**Player Edge** ≈ True Count × 0.5%
+
+**Bust Probability**
+Calculated based on remaining unseen cards that would cause your hand to exceed 21.
+
+**Basic Strategy**
+Suggests optimal play based on mathematical probability for the given situation.
+
 ## Roadmap
 - Week 1: Setup & Design (X)
 - Week 2: Authentication & Persistence (X)
@@ -121,10 +181,10 @@ $ go run cmd/client/main.go --host 127.0.0.1 --port 8080
 - Week 6: Complete MVP (Testing & Polishing) (X)
 - Week 7: Multiplayer Foundation (X)
 - Week 8: Multiplayer Game Loop (X)
-- Week 9: Multiplayer Enhancements
-- Week 10: Probability Analysis, Toggle, & Extended Stats
-- Week 11: Complete Project (Testing & Polishing)
-- Week 12: Demo
+- Week 9: Multiplayer Enhancements (X)
+- Week 10: Probability Analysis, Toggle, & Extended Stats (X)
+- Week 11: Complete Project (X)
+- Week 12: Demo (X)
 
 ### Solo Gameplay
 Server:
@@ -312,9 +372,12 @@ Type 'help' for available commands or 'quit' to exit.
 OK Welcome to Casino! Use SIGNUP <username> <password> or LOGIN <username> <password>
 
 $ login real madrid
-OK Welcome back, real! Balance: $6900.00
+OK Welcome back, real! Balance: $6600.00
 Available modes: SOLO, MULTIPLAYER
 Use SOLO or MULTIPLAYER to choose a mode, or BET <amount> for quick solo play.
+
+$ probstats on
+OK Probability stats display enabled
 
 $ multiplayer
 OK Joined multiplayer table (1/4 players)
@@ -344,38 +407,36 @@ inter bets $300.00
 
 $ 
 --- DEALING ---
-Seat 1 - real: [3♥] [Q♠] (Value: 13) | Bet: $500.00
-Seat 2 - inter: [8♠] [4♦] (Value: 12) | Bet: $300.00
-Dealer: [3♠] [Hidden]
+Seat 1 - real: [9♣] [7♣] (Value: 16) | Bet: $500.00
+Seat 2 - inter: [5♦] [A♠] (Value: 16) | Bet: $300.00
+Dealer: [10♠] [Hidden]
 
 YOUR TURN (30 seconds)
+
+PROBABILITY ANALYSIS:
+  Bust probability: 59.5% (busts on: 6,7,8,9,10,J,Q,K)
+  Running count: -2 | True count: -2.3 | House edge: ~1.1%
+  Basic strategy: SURRENDER
 Actions: HIT, STAND, DOUBLEDOWN, SURRENDER
 
-$ hit 
-OK You hit and got [7♥]
-Your hand: [3♥] [Q♠] [7♥] (Value: 20)
-
-YOUR TURN (30 seconds)
-Seat 1 - real: [3♥] [Q♠] [7♥] (Value: 20) | Bet: $500.00
-Seat 2 - inter: [8♠] [4♦] (Value: 12) | Bet: $300.00
-Dealer: [3♠] [Hidden]
-Actions: HIT, STAND
-
-$ stand
-OK You stand with 20
+$ surrender
+OK Surrendered! You'll get half your bet back.
 
 $ 
 inter's turn...
 
 $ 
-inter doubles down and gets [2♦] (now at 14)
+inter hits and gets [K♥] (now at 16)
+
+$ 
+inter stands with 16
 
 $ 
 --- DEALER TURN ---
-Dealer: [3♠] [4♣] [K♠] (Value: 17)
+Dealer: [10♠] [J♣] (Value: 20)
 --- RESULTS ---
-real: PLAYER_WIN → WIN (+$500.00)
-inter: DEALER_WIN → LOSS (-$600.00)
+real: SURRENDER → WIN (+$-250.00)
+inter: DEALER_WIN → LOSS (-$300.00)
 Round complete! Type READY to play again.
 
 $ ready
@@ -397,57 +458,44 @@ inter bets $400.00
 
 $ 
 --- DEALING ---
-Seat 1 - real: [8♦] [10♠] (Value: 18) | Bet: $600.00
-Seat 2 - inter: [J♥] [5♦] (Value: 15) | Bet: $400.00
-Dealer: [A♠] [K♣] (Value: 21)
+Seat 1 - real: [K♣] [3♦] (Value: 13) | Bet: $600.00
+Seat 2 - inter: [8♠] [8♦] (Value: 16) | Bet: $400.00
+Dealer: [4♣] [Hidden]
 
+YOUR TURN (30 seconds)
 
---- DEALER TURN ---
-Dealer: [A♠] [K♣] (Value: 21)
---- RESULTS ---
-real: DEALER_WIN → LOSS (-$600.00)
-inter: DEALER_WIN → LOSS (-$400.00)
-Round complete! Type READY to play again.
+PROBABILITY ANALYSIS:
+  Bust probability: 36.7% (busts on: 9,10,J,Q,K)
+  Running count: +1 | True count: +1.1 | Player edge: ~0.6%
+  Basic strategy: STAND
+Actions: HIT, STAND, DOUBLEDOWN, SURRENDER
 
-$ ready
-OK Marked ready. Waiting for other players...
-
-$ 
-inter is ready!
+$ stand
+OK You stand with 13
 
 $ 
---- NEW ROUND ---
-Place your bets! (30 seconds)
-Use: BET <amount>
-
-$ bet 700
-OK Bet placed: $700.00
-
-$ 
-inter bets $500.00
-
-$ 
---- DEALING ---
-Seat 1 - real: [J♣] [A♦] (Value: 21) | Bet: $700.00
-Seat 2 - inter: [A♣] [5♠] (Value: 16) | Bet: $500.00
-Dealer: [8♥] [Hidden]
-
 inter's turn...
 
 $ 
-inter stands with 16
+inter hits and gets [5♠] (now at 21)
+
+$ 
+inter stands with 21
 
 $ 
 --- DEALER TURN ---
-Dealer: [8♥] [10♥] (Value: 18)
+Dealer: [4♣] [7♥] [2♠] [2♦] [8♥] (Value: 23)
 --- RESULTS ---
-real: PLAYER_BLACKJACK → WIN (+$1050.00)
-inter: DEALER_WIN → LOSS (-$500.00)
+real: PLAYER_WIN → WIN (+$600.00)
+inter: PLAYER_WIN → WIN (+$400.00)
 Round complete! Type READY to play again.
 
 $ leave
 OK Left multiplayer mode. Back in lobby.
 Available modes: SOLO, MULTIPLAYER
+
+$ logout
+OK Logged out successfully
 
 $ quit
 ```
@@ -461,7 +509,7 @@ Type 'help' for available commands or 'quit' to exit.
 OK Welcome to Casino! Use SIGNUP <username> <password> or LOGIN <username> <password>
 
 $ login inter milan
-OK Welcome back, inter! Balance: $10300.00
+OK Welcome back, inter! Balance: $7900.00
 Available modes: SOLO, MULTIPLAYER
 Use SOLO or MULTIPLAYER to choose a mode, or BET <amount> for quick solo play.
 
@@ -491,35 +539,41 @@ OK Bet placed: $300.00
 
 $ 
 --- DEALING ---
-Seat 1 - real: [3♥] [Q♠] (Value: 13) | Bet: $500.00
-Seat 2 - inter: [8♠] [4♦] (Value: 12) | Bet: $300.00
-Dealer: [3♠] [Hidden]
+Seat 1 - real: [9♣] [7♣] (Value: 16) | Bet: $500.00
+Seat 2 - inter: [5♦] [A♠] (Value: 16) | Bet: $300.00
+Dealer: [10♠] [Hidden]
 
 real's turn...
 
 $ 
-real hits and gets [7♥] (now at 20)
-
-$ 
-real stands with 20
+real surrenders
 
 $ 
 YOUR TURN (30 seconds)
-Seat 1 - real: [3♥] [Q♠] [7♥] (Value: 20) | Bet: $500.00
-Seat 2 - inter: [8♠] [4♦] (Value: 12) | Bet: $300.00
-Dealer: [3♠] [Hidden]
+Seat 1 - real: [9♣] [7♣] (Value: 16) | Bet: $500.00
+Seat 2 - inter: [5♦] [A♠] (Value: 16) | Bet: $300.00
+Dealer: [10♠] [Hidden]
 Actions: HIT, STAND, DOUBLEDOWN, SURRENDER
 
-$ doubledown
-OK Doubled down! Got [2♦]
-Your hand: [8♠] [4♦] [2♦] (Value: 14)
+$ hit
+OK You hit and got [K♥]
+Your hand: [5♦] [A♠] [K♥] (Value: 16)
+
+YOUR TURN (30 seconds)
+Seat 1 - real: [9♣] [7♣] (Value: 16) | Bet: $500.00
+Seat 2 - inter: [5♦] [A♠] [K♥] (Value: 16) | Bet: $300.00
+Dealer: [10♠] [Hidden]
+Actions: HIT, STAND
+
+$ stand
+OK You stand with 16
 
 $ 
 --- DEALER TURN ---
-Dealer: [3♠] [4♣] [K♠] (Value: 17)
+Dealer: [10♠] [J♣] (Value: 20)
 --- RESULTS ---
-real: PLAYER_WIN → WIN (+$500.00)
-inter: DEALER_WIN → LOSS (-$600.00)
+real: SURRENDER → WIN (+$-250.00)
+inter: DEALER_WIN → LOSS (-$300.00)
 Round complete! Type READY to play again.
 
 $ 
@@ -541,53 +595,41 @@ OK Bet placed: $400.00
 
 $ 
 --- DEALING ---
-Seat 1 - real: [8♦] [10♠] (Value: 18) | Bet: $600.00
-Seat 2 - inter: [J♥] [5♦] (Value: 15) | Bet: $400.00
-Dealer: [A♠] [K♣] (Value: 21)
+Seat 1 - real: [K♣] [3♦] (Value: 13) | Bet: $600.00
+Seat 2 - inter: [8♠] [8♦] (Value: 16) | Bet: $400.00
+Dealer: [4♣] [Hidden]
 
-
---- DEALER TURN ---
-Dealer: [A♠] [K♣] (Value: 21)
---- RESULTS ---
-real: DEALER_WIN → LOSS (-$600.00)
-inter: DEALER_WIN → LOSS (-$400.00)
-Round complete! Type READY to play again.
+real's turn...
 
 $ 
-real is ready!
-
-$ ready
-OK Marked ready. Waiting for other players...
+real stands with 13
 
 $ 
---- NEW ROUND ---
-Place your bets! (30 seconds)
-Use: BET <amount>
-
-$ 
-real bets $700.00
-
-$ bet 500
-OK Bet placed: $500.00
-
-$ 
---- DEALING ---
-Seat 1 - real: [J♣] [A♦] (Value: 21) | Bet: $700.00
-Seat 2 - inter: [A♣] [5♠] (Value: 16) | Bet: $500.00
-Dealer: [8♥] [Hidden]
-
 YOUR TURN (30 seconds)
+Seat 1 - real: [K♣] [3♦] (Value: 13) | Bet: $600.00
+Seat 2 - inter: [8♠] [8♦] (Value: 16) | Bet: $400.00
+Dealer: [4♣] [Hidden]
 Actions: HIT, STAND, DOUBLEDOWN, SURRENDER
 
+$ hit
+OK You hit and got [5♠]
+Your hand: [8♠] [8♦] [5♠] (Value: 21)
+
+YOUR TURN (30 seconds)
+Seat 1 - real: [K♣] [3♦] (Value: 13) | Bet: $600.00
+Seat 2 - inter: [8♠] [8♦] [5♠] (Value: 21) | Bet: $400.00
+Dealer: [4♣] [Hidden]
+Actions: HIT, STAND
+
 $ stand
-OK You stand with 16
+OK You stand with 21
 
 $ 
 --- DEALER TURN ---
-Dealer: [8♥] [10♥] (Value: 18)
+Dealer: [4♣] [7♥] [2♠] [2♦] [8♥] (Value: 23)
 --- RESULTS ---
-real: PLAYER_BLACKJACK → WIN (+$1050.00)
-inter: DEALER_WIN → LOSS (-$500.00)
+real: PLAYER_WIN → WIN (+$600.00)
+inter: PLAYER_WIN → WIN (+$400.00)
 Round complete! Type READY to play again.
 
 $ 
@@ -596,6 +638,9 @@ real left the table
 $ leave
 OK Left multiplayer mode. Back in lobby.
 Available modes: SOLO, MULTIPLAYER
+
+$ logout
+OK Logged out successfully
 
 $ quit
 ```

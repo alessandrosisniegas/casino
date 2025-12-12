@@ -219,3 +219,126 @@ func TestUserStats(t *testing.T) {
 		t.Errorf("Updated GamesWon = %v, want 3", updatedStats.GamesWon)
 	}
 }
+
+func TestInitUserPreferences(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	user, err := db.CreateUser("prefsuser", "hashedpass123")
+	if err != nil {
+		t.Fatalf("CreateUser() error = %v", err)
+	}
+
+	prefs, err := db.GetUserPreferences(user.ID)
+	if err != nil {
+		t.Fatalf("GetUserPreferences() error = %v", err)
+	}
+
+	if prefs.UserID != user.ID {
+		t.Errorf("UserID = %v, want %v", prefs.UserID, user.ID)
+	}
+
+	if prefs.ShowStats != false {
+		t.Errorf("ShowStats = %v, want false (default)", prefs.ShowStats)
+	}
+}
+
+func TestGetUserPreferences(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	user, err := db.CreateUser("prefsuser2", "hashedpass123")
+	if err != nil {
+		t.Fatalf("CreateUser() error = %v", err)
+	}
+
+	prefs, err := db.GetUserPreferences(user.ID)
+	if err != nil {
+		t.Fatalf("GetUserPreferences() error = %v", err)
+	}
+
+	if prefs == nil {
+		t.Fatal("Expected preferences, got nil")
+	}
+
+	if prefs.UserID != user.ID {
+		t.Errorf("UserID = %v, want %v", prefs.UserID, user.ID)
+	}
+}
+
+func TestGetUserPreferencesNotFound(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	_, err := db.GetUserPreferences(99999)
+	if err == nil {
+		t.Error("Expected error for non-existent user preferences, got nil")
+	}
+}
+
+func TestUpdateUserPreferences(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	user, err := db.CreateUser("prefsuser3", "hashedpass123")
+	if err != nil {
+		t.Fatalf("CreateUser() error = %v", err)
+	}
+
+	// Initially should be false
+	prefs, err := db.GetUserPreferences(user.ID)
+	if err != nil {
+		t.Fatalf("GetUserPreferences() error = %v", err)
+	}
+	if prefs.ShowStats != false {
+		t.Errorf("Initial ShowStats = %v, want false", prefs.ShowStats)
+	}
+
+	// Update to true
+	err = db.UpdateUserPreferences(user.ID, true)
+	if err != nil {
+		t.Fatalf("UpdateUserPreferences() error = %v", err)
+	}
+
+	// Verify update
+	prefs, err = db.GetUserPreferences(user.ID)
+	if err != nil {
+		t.Fatalf("GetUserPreferences() error = %v", err)
+	}
+	if prefs.ShowStats != true {
+		t.Errorf("Updated ShowStats = %v, want true", prefs.ShowStats)
+	}
+
+	// Update back to false
+	err = db.UpdateUserPreferences(user.ID, false)
+	if err != nil {
+		t.Fatalf("UpdateUserPreferences() error = %v", err)
+	}
+
+	// Verify update
+	prefs, err = db.GetUserPreferences(user.ID)
+	if err != nil {
+		t.Fatalf("GetUserPreferences() error = %v", err)
+	}
+	if prefs.ShowStats != false {
+		t.Errorf("Updated ShowStats = %v, want false", prefs.ShowStats)
+	}
+}
+
+func TestUpdateUserPreferencesNonExistent(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	err := db.UpdateUserPreferences(99999, true)
+	if err != nil {
+		// This is acceptable - updating non-existent preferences should fail or no-op
+		// SQLite will just not update any rows
+		return
+	}
+
+	// If no error, verify that no preferences were created
+	_, err = db.GetUserPreferences(99999)
+	if err == nil {
+		t.Error("Should not have created preferences for non-existent user")
+	}
+}

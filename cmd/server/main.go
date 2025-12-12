@@ -221,6 +221,8 @@ func (s *Server) handleCommand(client *ClientState, command string, args []strin
 		s.handleDoubleDown(client, args)
 	case "SURRENDER":
 		s.handleSurrender(client, args)
+	case "PROBSTATS":
+		s.handleProbStats(client, args)
 	case "QUIT", "EXIT":
 		s.writeResponse(client, "OK Goodbye!")
 		client.conn.Close()
@@ -348,6 +350,65 @@ func (s *Server) handleWhoami(client *ClientState, _ []string) {
 		client.user.Username, client.user.ID, float64(client.user.Balance)/100))
 }
 
+func (s *Server) handleProbStats(client *ClientState, args []string) {
+	if client.user == nil {
+		s.writeResponse(client, "ERROR Please login first")
+		return
+	}
+
+	// Get user preferences (create if not exists for old accounts)
+	prefs, err := s.db.GetUserPreferences(client.user.ID)
+	if err != nil {
+		// Preferences don't exist - create them with default value
+		if err := s.db.InitUserPreferences(client.user.ID); err != nil {
+			s.writeResponse(client, fmt.Sprintf("ERROR Failed to initialize preferences: %s", err.Error()))
+			return
+		}
+		// Try to get them again
+		prefs, err = s.db.GetUserPreferences(client.user.ID)
+		if err != nil {
+			s.writeResponse(client, fmt.Sprintf("ERROR Failed to get preferences: %s", err.Error()))
+			return
+		}
+	}
+
+	// If no arguments, show current status
+	if len(args) == 0 {
+		status := "OFF"
+		if prefs.ShowStats {
+			status = "ON"
+		}
+		s.writeResponse(client, fmt.Sprintf("OK Probability stats display: %s", status))
+		return
+	}
+
+	// Parse ON/OFF argument
+	arg := strings.ToUpper(args[0])
+	var newValue bool
+
+	switch arg {
+	case "ON":
+		newValue = true
+	case "OFF":
+		newValue = false
+	default:
+		s.writeResponse(client, "ERROR Usage: PROBSTATS [ON|OFF]")
+		return
+	}
+
+	// Update preferences
+	if err := s.db.UpdateUserPreferences(client.user.ID, newValue); err != nil {
+		s.writeResponse(client, fmt.Sprintf("ERROR Failed to update preferences: %s", err.Error()))
+		return
+	}
+
+	status := "disabled"
+	if newValue {
+		status = "enabled"
+	}
+	s.writeResponse(client, fmt.Sprintf("OK Probability stats display %s", status))
+}
+
 func (s *Server) handleHelp(client *ClientState, _ []string) {
 	help := "OK Available commands:\n"
 	help += "\nAccount Management:\n"
@@ -380,6 +441,10 @@ func (s *Server) handleHelp(client *ClientState, _ []string) {
 		help += "  STAND                        - End your turn\n"
 		help += "  DOUBLEDOWN                   - Double bet, draw one card, end turn\n"
 		help += "  SURRENDER                    - Forfeit hand, get half bet back\n"
+
+		help += "\nProbability Analysis:\n"
+		help += "  PROBSTATS [ON|OFF]           - Toggle probability stats display\n"
+		help += "                                 (shows bust odds, card count, strategy)\n"
 	}
 
 	help += "\nOther:\n"
@@ -411,6 +476,38 @@ func (s *Server) showStats() {
 func (s *Server) showUsers() {
 	fmt.Println("Use SQLite to view users:")
 	fmt.Println("  sqlite3 data/casino.db \"SELECT id, username, balance/100.0, created_at FROM users;\"")
+}
+
+// formatProbabilityStats generates the probability analysis display
+func (s *Server) formatProbabilityStats(playerHand *game.Hand, dealerUpcard game.Card, deck *game.Deck, counter *game.CardCounter, canDoubleDown bool, canSurrender bool) string {
+	// Calculate bust probability
+	bustProb := game.CalculateBustProbability(playerHand, deck)
+	bustCards := game.GetBustCards(playerHand.Value())
+
+	// Get optimal action
+	optimalAction := game.GetOptimalAction(playerHand, dealerUpcard, canDoubleDown, canSurrender)
+
+	// Calculate card counting metrics
+	decksRemaining := game.CalculateDecksRemaining(1, counter.GetCardsDealt())
+	trueCount := counter.GetTrueCount(decksRemaining)
+	advantage := counter.GetAdvantage(decksRemaining)
+
+	// Format the display
+	stats := "\nPROBABILITY ANALYSIS:\n"
+	stats += fmt.Sprintf("  %s\n", game.FormatBustProbability(bustProb, bustCards))
+	stats += fmt.Sprintf("  Running count: %+d | True count: %+.1f | ", counter.GetRunningCount(), trueCount)
+
+	if advantage > 0 {
+		stats += fmt.Sprintf("Player edge: ~%.1f%%\n", advantage)
+	} else if advantage < 0 {
+		stats += fmt.Sprintf("House edge: ~%.1f%%\n", -advantage)
+	} else {
+		stats += "Even odds\n"
+	}
+
+	stats += fmt.Sprintf("  Basic strategy: %s\n", optimalAction)
+
+	return stats
 }
 
 func (s *Server) handleSolo(client *ClientState, _ []string) {
@@ -602,6 +699,15 @@ func (s *Server) handleBet(client *ClientState, args []string) {
 		if client.soloGame.Phase == game.PhaseGameOver {
 			s.handleSoloGameOver(client)
 		} else {
+			// Show probability stats if enabled
+			prefs, err := s.db.GetUserPreferences(client.user.ID)
+			if err == nil && prefs.ShowStats && len(client.soloGame.DealerHand.Cards) > 0 {
+				dealerUpcard := client.soloGame.DealerHand.Cards[0]
+				canDoubleDown := len(client.soloGame.PlayerHand.Cards) == 2
+				canSurrender := len(client.soloGame.PlayerHand.Cards) == 2
+				response += s.formatProbabilityStats(client.soloGame.PlayerHand, dealerUpcard, client.soloGame.Deck, client.soloGame.Counter, canDoubleDown, canSurrender)
+			}
+
 			validActions := client.soloGame.GetValidActions()
 			if len(validActions) > 0 {
 				response += "\nActions: " + strings.Join(validActions, ", ")
@@ -636,15 +742,25 @@ func (s *Server) handleHit(client *ClientState, _ []string) {
 		if player.HasActed {
 			go s.advanceMultiplayerTurn(true, true)
 		} else {
-			actions := "Actions: HIT, STAND\n"
-			if len(player.Hand.Cards) == 2 {
-				actions = "Actions: HIT, STAND, DOUBLEDOWN, SURRENDER\n"
-			}
 			client.conn.Write([]byte("\nYOUR TURN (30 seconds)\n"))
 
 			tableState := s.mainTable.GetTableStateWithoutTurnMarker(true)
 			client.conn.Write([]byte(tableState))
 
+			// Show probability stats if enabled (only to current player)
+			prefs, err := s.db.GetUserPreferences(client.user.ID)
+			if err == nil && prefs.ShowStats && len(s.mainTable.Dealer.Cards) > 0 {
+				dealerUpcard := s.mainTable.Dealer.Cards[0]
+				canDoubleDown := len(player.Hand.Cards) == 2
+				canSurrender := len(player.Hand.Cards) == 2
+				statsDisplay := s.formatProbabilityStats(player.Hand, dealerUpcard, s.mainTable.Deck, s.mainTable.Counter, canDoubleDown, canSurrender)
+				client.conn.Write([]byte(statsDisplay))
+			}
+
+			actions := "Actions: HIT, STAND\n"
+			if len(player.Hand.Cards) == 2 {
+				actions = "Actions: HIT, STAND, DOUBLEDOWN, SURRENDER\n"
+			}
 			client.conn.Write([]byte(actions))
 		}
 	} else {
@@ -663,6 +779,15 @@ func (s *Server) handleHit(client *ClientState, _ []string) {
 		if client.soloGame.Phase == game.PhaseGameOver {
 			s.handleSoloGameOver(client)
 		} else {
+			// Show probability stats if enabled
+			prefs, err := s.db.GetUserPreferences(client.user.ID)
+			if err == nil && prefs.ShowStats && len(client.soloGame.DealerHand.Cards) > 0 {
+				dealerUpcard := client.soloGame.DealerHand.Cards[0]
+				canDoubleDown := len(client.soloGame.PlayerHand.Cards) == 2
+				canSurrender := len(client.soloGame.PlayerHand.Cards) == 2
+				response += s.formatProbabilityStats(client.soloGame.PlayerHand, dealerUpcard, client.soloGame.Deck, client.soloGame.Counter, canDoubleDown, canSurrender)
+			}
+
 			validActions := client.soloGame.GetValidActions()
 			if len(validActions) > 0 {
 				response += "\nActions: " + strings.Join(validActions, ", ")
@@ -960,6 +1085,19 @@ func (s *Server) promptCurrentPlayer(addLeadingNewline bool, showTableState bool
 	if showTableState {
 		tableState := s.mainTable.GetTableStateWithoutTurnMarker(true) // true = hide dealer's hole card
 		currentPlayer.Connection.Write([]byte(tableState))
+	}
+
+	// Show probability stats if enabled (only to current player)
+	session, err := s.db.GetSession(currentPlayer.SessionID)
+	if err == nil {
+		prefs, err := s.db.GetUserPreferences(session.UserID)
+		if err == nil && prefs.ShowStats && len(s.mainTable.Dealer.Cards) > 0 {
+			dealerUpcard := s.mainTable.Dealer.Cards[0]
+			canDoubleDown := len(currentPlayer.Hand.Cards) == 2
+			canSurrender := len(currentPlayer.Hand.Cards) == 2
+			statsDisplay := s.formatProbabilityStats(currentPlayer.Hand, dealerUpcard, s.mainTable.Deck, s.mainTable.Counter, canDoubleDown, canSurrender)
+			currentPlayer.Connection.Write([]byte(statsDisplay))
+		}
 	}
 
 	currentPlayer.Connection.Write([]byte("Actions: HIT, STAND, DOUBLEDOWN, SURRENDER\n"))

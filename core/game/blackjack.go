@@ -54,6 +54,7 @@ type Game struct {
 	Result      GameResult
 	IsDoubled   bool
 	PlayerStood bool
+	Counter     *CardCounter // Card counting for probability analysis
 }
 
 func NewDeck() *Deck {
@@ -153,6 +154,7 @@ func NewGame() *Game {
 		Bet:         0,
 		IsDoubled:   false,
 		PlayerStood: false,
+		Counter:     NewCardCounter(),
 	}
 }
 
@@ -163,6 +165,7 @@ func NewGameWithDeck(cards []Card) *Game {
 
 	return &Game{
 		Deck:        &Deck{Cards: deckCopy},
+		Counter:     NewCardCounter(),
 		PlayerHand:  NewHand(),
 		DealerHand:  NewHand(),
 		Phase:       PhaseWaitingForBet,
@@ -189,24 +192,28 @@ func (g *Game) PlaceBetNoShuffle(amount int64) error {
 		return fmt.Errorf("failed to deal: %w", err)
 	}
 	g.PlayerHand.AddCard(card1)
+	g.Counter.UpdateCount(card1)
 
 	card2, err := g.Deck.Draw()
 	if err != nil {
 		return fmt.Errorf("failed to deal: %w", err)
 	}
 	g.DealerHand.AddCard(card2)
+	g.Counter.UpdateCount(card2)
 
 	card3, err := g.Deck.Draw()
 	if err != nil {
 		return fmt.Errorf("failed to deal: %w", err)
 	}
 	g.PlayerHand.AddCard(card3)
+	g.Counter.UpdateCount(card3)
 
 	card4, err := g.Deck.Draw()
 	if err != nil {
 		return fmt.Errorf("failed to deal: %w", err)
 	}
 	g.DealerHand.AddCard(card4)
+	g.Counter.UpdateCount(card4)
 
 	pBJ := g.PlayerHand.IsBlackjack()
 	dBJ := g.DealerHand.IsBlackjack()
@@ -239,6 +246,7 @@ func (g *Game) PlaceBet(amount int64) error {
 
 	g.Bet = amount
 	g.Deck.Shuffle()
+	g.Counter.Reset() // Reset counter on shuffle
 
 	// Deal initial cards - check for deck exhaustion
 	card1, err := g.Deck.Draw()
@@ -246,24 +254,28 @@ func (g *Game) PlaceBet(amount int64) error {
 		return fmt.Errorf("failed to deal: %w", err)
 	}
 	g.PlayerHand.AddCard(card1)
+	g.Counter.UpdateCount(card1)
 
 	card2, err := g.Deck.Draw()
 	if err != nil {
 		return fmt.Errorf("failed to deal: %w", err)
 	}
 	g.DealerHand.AddCard(card2)
+	g.Counter.UpdateCount(card2)
 
 	card3, err := g.Deck.Draw()
 	if err != nil {
 		return fmt.Errorf("failed to deal: %w", err)
 	}
 	g.PlayerHand.AddCard(card3)
+	g.Counter.UpdateCount(card3)
 
 	card4, err := g.Deck.Draw()
 	if err != nil {
 		return fmt.Errorf("failed to deal: %w", err)
 	}
 	g.DealerHand.AddCard(card4)
+	g.Counter.UpdateCount(card4)
 
 	pBJ := g.PlayerHand.IsBlackjack()
 	dBJ := g.DealerHand.IsBlackjack()
@@ -297,6 +309,7 @@ func (g *Game) Hit() error {
 	}
 
 	g.PlayerHand.AddCard(card)
+	g.Counter.UpdateCount(card)
 
 	if g.PlayerHand.IsBusted() {
 		g.Phase = PhaseGameOver
@@ -337,6 +350,7 @@ func (g *Game) DoubleDown() error {
 	}
 
 	g.PlayerHand.AddCard(card)
+	g.Counter.UpdateCount(card)
 
 	if g.PlayerHand.IsBusted() {
 		g.Phase = PhaseGameOver
@@ -376,6 +390,7 @@ func (g *Game) playDealerTurn() {
 			return
 		}
 		g.DealerHand.AddCard(card)
+		g.Counter.UpdateCount(card)
 	}
 
 	g.Phase = PhaseGameOver

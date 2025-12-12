@@ -49,6 +49,7 @@ type Table struct {
 	MaxBet      int64
 	MaxPlayers  int
 	RoundActive bool
+	Counter     *CardCounter // Card counting for probability analysis
 	mu          sync.RWMutex
 }
 
@@ -63,6 +64,7 @@ func NewTable(id string, minBet, maxBet int64, maxPlayers int) *Table {
 		MinBet:     minBet,
 		MaxBet:     maxBet,
 		MaxPlayers: maxPlayers,
+		Counter:    NewCardCounter(),
 	}
 }
 
@@ -252,8 +254,9 @@ func (t *Table) DealInitialCards() error {
 
 	t.Phase = PhaseDealing
 
-	// Shuffle deck
+	// Shuffle deck and reset counter
 	t.Deck.Shuffle()
+	t.Counter.Reset()
 
 	// Deal first card to each player
 	for _, p := range t.Players {
@@ -263,6 +266,7 @@ func (t *Table) DealInitialCards() error {
 				return fmt.Errorf("deck exhausted during deal: %w", err)
 			}
 			p.Hand.AddCard(card)
+			t.Counter.UpdateCount(card)
 		}
 	}
 
@@ -272,6 +276,7 @@ func (t *Table) DealInitialCards() error {
 		return fmt.Errorf("deck exhausted during deal: %w", err)
 	}
 	t.Dealer.AddCard(card)
+	t.Counter.UpdateCount(card)
 
 	// Deal second card to each player
 	for _, p := range t.Players {
@@ -281,6 +286,7 @@ func (t *Table) DealInitialCards() error {
 				return fmt.Errorf("deck exhausted during deal: %w", err)
 			}
 			p.Hand.AddCard(card)
+			t.Counter.UpdateCount(card)
 		}
 	}
 
@@ -290,6 +296,7 @@ func (t *Table) DealInitialCards() error {
 		return fmt.Errorf("deck exhausted during deal: %w", err)
 	}
 	t.Dealer.AddCard(card)
+	t.Counter.UpdateCount(card)
 
 	// Check for dealer blackjack
 	if t.Dealer.IsBlackjack() {
@@ -392,6 +399,7 @@ func (t *Table) PlayerHit(sessionID string) error {
 	}
 
 	player.Hand.AddCard(card)
+	t.Counter.UpdateCount(card)
 
 	// Check for bust
 	if player.Hand.Value() > 21 {
@@ -464,6 +472,7 @@ func (t *Table) PlayerDoubleDown(sessionID string) error {
 	}
 
 	player.Hand.AddCard(card)
+	t.Counter.UpdateCount(card)
 
 	// Check for bust
 	if player.Hand.Value() > 21 {
@@ -539,6 +548,7 @@ func (t *Table) PlayDealerHand() error {
 			return nil
 		}
 		t.Dealer.AddCard(card)
+		t.Counter.UpdateCount(card)
 	}
 
 	return nil
