@@ -1,4 +1,4 @@
-.PHONY: build test run-server run-client fmt stop
+.PHONY: build test run-server run-server-lan run-client run-client-lan fmt stop
 
 PORT ?= 9090
 
@@ -16,6 +16,10 @@ run-server-lan:
 
 run-client:
 	cd cmd/client && go run .
+
+run-client-lan:
+	@if [ -z "$(HOST)" ]; then echo "Usage: make run-client-lan HOST=<server-ip>"; exit 1; fi
+	cd cmd/client && go run . -host $(HOST)
 
 fmt:
 	go fmt ./...

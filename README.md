@@ -5,11 +5,13 @@ Completion will include TCP multiplayer and probability guidance.
 
 ## Usage
 ```bash
-make build
-make test       # run all tests
-make run-server # start server in one terminal
-make run-client # start client in another terminal
-make stop       # stop the server
+make build          # build the project
+make test           # run all tests
+make run-server     # start server (localhost only)
+make run-server-lan # start server (accepts LAN connections)
+make run-client     # start client (connects to localhost)
+make run-client-lan HOST=<ip>  # connect to remote server
+make stop           # stop the server
 ```
 
 ### Commands
@@ -110,13 +112,40 @@ READY                # Mark ready to start round
 LEAVE                # Leave table, return to lobby
 ```
 
-### Connecting to Remote Server
-```bash
-# Connect to a server on your local network
-$ go run cmd/client/main.go --host 192.168.1.100
+### LAN Multiplayer (Multiple Machines)
 
-# Connect to a server on a different port
-$ go run cmd/client/main.go --host 127.0.0.1 --port 8080
+Play across different laptops/computers on the same WiFi network.
+
+**On the host machine (runs server + client 1):**
+```bash
+# Terminal 1 - Start server in LAN mode
+make run-server-lan
+
+# Terminal 2 - Start your client
+make run-client
+```
+
+**On other machines (client only):**
+
+Option 1 - Using make command:
+```bash
+make run-client-lan HOST=192.168.1.100
+```
+
+Option 2 - Using raw command:
+```bash
+cd cmd/client && go run . -host 192.168.1.100
+```
+
+Replace `192.168.1.100` with the host machine's IP address.
+
+**Find your IP address:**
+```bash
+# On Mac
+ipconfig getifaddr en0
+
+# On Linux
+hostname -I
 ```
 
 ## Probability Analysis
